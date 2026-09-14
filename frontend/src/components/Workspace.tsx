@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Problem, ProblemDifficulty, SupportedLanguage, SubmissionDetail } from '../types';
 import { submissionsApi } from '../api/submissionsApi';
+import { problemsApi } from '../api/problemsApi';
 import { useTheme } from '../context/ThemeContext';
 
 interface WorkspaceProps {
@@ -63,12 +64,32 @@ var solve = function(nums, target) {
 
 export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVerdict }) => {
   const { isDark } = useTheme();
+  const [currentProblem, setCurrentProblem] = useState<Problem>(problem);
   const [language, setLanguage] = useState<SupportedLanguage>('python');
   const [code, setCode] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'description' | 'history'>('description');
   const [consoleOpen, setConsoleOpen] = useState<boolean>(true);
   const [consoleTab, setConsoleTab] = useState<'testcases' | 'output'>('testcases');
   const [selectedTestCaseIdx, setSelectedTestCaseIdx] = useState<number>(0);
+
+  // Fetch full problem details (description, templates, and sample test cases)
+  useEffect(() => {
+    let isMounted = true;
+    const fetchFullProblem = async () => {
+      try {
+        const full = await problemsApi.getProblemBySlug(problem.slug);
+        if (isMounted && full) {
+          setCurrentProblem(full);
+        }
+      } catch (err) {
+        console.error('Failed to load full problem details:', err);
+      }
+    };
+    fetchFullProblem();
+    return () => {
+      isMounted = false;
+    };
+  }, [problem.slug]);
 
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -158,7 +179,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
 
   // Load starter template when language or problem changes
   useEffect(() => {
-    const existingTemplate = problem.templates?.find(
+    const existingTemplate = currentProblem.templates?.find(
       (t) => t.language.toLowerCase() === language.toLowerCase()
     );
     if (existingTemplate && existingTemplate.starter_code) {
@@ -166,7 +187,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
     } else {
       setCode(DEFAULT_TEMPLATES[language] || DEFAULT_TEMPLATES.python);
     }
-  }, [language, problem]);
+  }, [language, currentProblem]);
 
   // Load submissions history when history tab opens
   useEffect(() => {
@@ -318,7 +339,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
           {/* Reset Template */}
           <button
             onClick={() => {
-              const tmpl = problem.templates?.find((t) => t.language === language);
+              const tmpl = currentProblem.templates?.find((t) => t.language === language);
               setCode(tmpl?.starter_code || DEFAULT_TEMPLATES[language]);
             }}
             title="Reset code template"
@@ -372,16 +393,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
               <>
                 {/* Description Body */}
                 <div className="whitespace-pre-wrap font-sans text-slate-800 dark:text-slate-200 leading-relaxed text-sm">
-                  {problem.description}
+                  {currentProblem.description || problem.description}
                 </div>
 
                 {/* Sample Test Case Examples */}
-                {problem.sample_test_cases && problem.sample_test_cases.length > 0 && (
+                {currentProblem.sample_test_cases && currentProblem.sample_test_cases.length > 0 && (
                   <div className="space-y-4 pt-2">
                     <h4 className="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-400 dark:text-slate-500">
                       Examples
                     </h4>
-                    {problem.sample_test_cases.map((tc, idx) => (
+                    {currentProblem.sample_test_cases.map((tc, idx) => (
                       <div
                         key={idx}
                         className="rounded-2xl border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02] p-4 font-mono text-xs space-y-2.5 shadow-sm"
@@ -405,11 +426,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
                 )}
 
                 {/* Tags Section */}
-                {problem.tags && problem.tags.length > 0 && (
+                {currentProblem.tags && currentProblem.tags.length > 0 && (
                   <div className="pt-4 border-t border-black/10 dark:border-white/10">
                     <p className="text-xs font-semibold text-slate-400 dark:text-slate-500 mb-2 uppercase tracking-wider">Related Topics</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {problem.tags.map((tag) => (
+                      {currentProblem.tags.map((tag) => (
                         <span
                           key={tag.id}
                           className="rounded-md border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] px-2.5 py-1 text-xs text-slate-600 dark:text-slate-400 font-medium"
@@ -565,10 +586,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
               >
                 {consoleTab === 'testcases' ? (
                   <div className="space-y-3">
-                    {problem.sample_test_cases && problem.sample_test_cases.length > 0 ? (
+                    {currentProblem.sample_test_cases && currentProblem.sample_test_cases.length > 0 ? (
                       <div>
                         <div className="flex gap-2 mb-2">
-                          {problem.sample_test_cases.map((_, i) => (
+                          {currentProblem.sample_test_cases.map((_, i) => (
                             <button
                               key={i}
                               onClick={() => setSelectedTestCaseIdx(i)}
@@ -585,11 +606,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
                         <div className="space-y-2 rounded-2xl bg-white/70 dark:bg-slate-900/60 p-3.5 border border-black/10 dark:border-white/10">
                           <p className="text-slate-400 text-[10px] uppercase font-sans font-semibold">Input:</p>
                           <pre className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap font-mono">
-                            {problem.sample_test_cases[selectedTestCaseIdx]?.input}
+                            {currentProblem.sample_test_cases[selectedTestCaseIdx]?.input}
                           </pre>
                           <p className="text-slate-400 text-[10px] uppercase font-sans font-semibold pt-1">Expected Output:</p>
                           <pre className="text-emerald-600 dark:text-emerald-400 font-semibold whitespace-pre-wrap font-mono">
-                            {problem.sample_test_cases[selectedTestCaseIdx]?.expected_output}
+                            {currentProblem.sample_test_cases[selectedTestCaseIdx]?.expected_output}
                           </pre>
                         </div>
                       </div>
