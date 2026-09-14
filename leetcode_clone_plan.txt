@@ -1,0 +1,101 @@
+LeetCode Clone — Detailed Execution Plan
+
+Phase 1: Project Setup & Database Layer
+1.1 Repository Initialization
+  - Initialize Git repository.
+  - Setup Python environment (e.g., using `poetry` or `venv`).
+  - Create project structure (`app/`, `core/`, `api/`, `models/`, `services/`, `worker/`, `tests/`).
+1.2 Database Provisioning (Local & AWS)
+  - Write `docker-compose.yml` for local PostgreSQL and Redis.
+  - Setup AWS RDS PostgreSQL instance (db.t3.micro, Multi-AZ off) and ElastiCache Redis (cache.t3.micro).
+  - Create VPC, public/private subnets, and security groups in AWS.
+1.3 SQLAlchemy & Alembic Setup
+  - Configure SQLAlchemy async engine.
+  - Translate the provided `schema.sql` into SQLAlchemy 2.0 ORM models (`users`, `problems`, `tags`, `problem_tags`, `problem_templates`, `test_cases`, `submissions`, `user_problem_status`).
+  - Initialize Alembic and generate the first migration.
+
+Phase 2: Authentication & Authorization
+2.1 AWS Cognito & Local Demo Mode Setup
+  - Support Dual-Mode Auth: Real AWS Cognito User Pool OR local Demo/Mock Mode (toggle via `MOCK_COGNITO=True`) for local development without active AWS resources.
+  - Configure App Client and required attributes (email, sub, username).
+  - Provide a demo token generator endpoint (`POST /auth/demo-token`) for instant testing in Swagger UI and dev environments.
+2.2 FastAPI Auth Middleware
+  - Implement JWT validation dependency using `python-jose` to verify tokens against Cognito JWKS (or local mock keys in demo mode).
+  - Implement role-based access control (RBAC) dependency (checking for `admin` vs `user` roles from the local database).
+2.3 Auth Sync Endpoint
+  - Implement `POST /auth/sync` to create a local `users` row on first login using JWT claims.
+
+Phase 3: Core API Endpoints (Problems & S3 Media)
+3.1 Problem CRUD Operations
+  - Implement `GET /problems` with keyset pagination (using `idx_problems_published_created` index) and filtering (difficulty, tags).
+  - Implement `GET /problems/{slug}` to retrieve problem details, starter code, and sample test cases.
+  - Implement `POST /problems` and `PATCH /problems/{id}` for admin problem management.
+  - Implement S3 storage service for all test cases (all inputs and expected outputs stored in S3; DB stores S3 keys and metadata only).
+  - Implement avatar upload endpoint with S3 presigned URL generation (`POST /users/me/avatar/presigned-url`).
+3.2 Caching Layer
+  - Integrate Redis caching for `GET /problems` and `GET /problems/{slug}`.
+  - Implement cache invalidation when a problem is created or updated.
+
+Phase 4: Code Execution & Judge0 Integration
+4.1 Judge0 Infrastructure
+  - Launch an EC2 instance in a public subnet for Judge0 (or local dockerized Judge0 for local dev).
+  - Deploy Judge0 via official `docker-compose`.
+  - Configure security groups to allow inbound traffic only from the API instance's security group.
+4.2 Judge0 Client Service
+  - Create `services/judge0_client.py` to handle interactions with Judge0 API.
+  - Implement logic to create submissions/batches and receive tokens.
+4.3 Celery Worker Setup
+  - Configure Celery with Redis as broker and result backend.
+  - Write Celery tasks for code submission and polling/callbacks.
+4.4 Run & Submit Endpoints
+  - Implement `POST /problems/{slug}/run` (enqueue task for sample test cases).
+  - Implement `POST /problems/{slug}/submit` (enqueue task for hidden test cases, record result).
+4.5 Result Handling
+  - Implement internal webhook endpoint `POST /internal/judge0-callback` to receive results from Judge0 and update the database.
+
+Phase 5: Submissions History & Rate Limiting
+5.1 Rate Limiting Middleware
+  - Implement Redis-backed sliding window or token bucket rate limiting.
+  - Apply strict limits to `POST /problems/{slug}/run` (e.g., 10 runs/min, 100 runs/day per user).
+5.2 Submissions History
+  - Implement `GET /submissions` with pagination, scoped to the current user.
+  - Implement `GET /submissions/{id}` for polling final verdicts.
+
+Phase 6: Modern Web Frontend (LeetCode UI & Monaco Editor)
+6.1 Frontend Setup & Design System
+  - Initialize modern web application (React / Next.js / Vite) with dark-mode first design system, smooth typography, and responsive layout.
+  - Configure Axios / Fetch API client with automatic JWT token injection and error handling.
+6.2 Authentication & User State
+  - Support both Demo Login (instant switch between "Coder / User" and "Problem Setter / Admin") and AWS Cognito Hosted UI / OAuth flow.
+  - Manage user session and local storage persistence.
+6.3 Problem Catalog & Filtering
+  - Implement problem list page with difficulty badges (Easy / Medium / Hard), tag pills, search bar, and keyset infinite scroll / pagination.
+  - Visual indicators for Solved / Attempted status per problem.
+6.4 Problem Solving Workspace (Interactive IDE)
+  - Resizable split-pane layout:
+    - Left Pane: Problem description (Markdown rendered with math/code blocks), constraints, examples, and discussions tab.
+    - Right Pane: Monaco Editor (syntax highlighting, line numbers, autocomplete, language selector: Python, C++, Java, JS) with automatic starter code template population.
+    - Bottom Pane: Interactive test case runner tab (custom test input & expected output) and console output.
+6.5 Code Execution & Real-Time Verdicts
+  - "Run Code" button for fast feedback on sample test cases.
+  - "Submit Solution" button with real-time polling / WebSocket status updates.
+  - Verdict presentation modal/banner: Accepted (with runtime ms & memory KB comparison graphs), Wrong Answer (with diff between expected vs actual), Time Limit Exceeded, Compile Error.
+6.6 Submissions & User Dashboard
+  - Problem submission history table with code modal view.
+  - User profile with statistics (problems solved by difficulty, acceptance rate).
+
+Phase 7: Deployment & Cloud Hardening
+7.1 Backend & Worker Deployment
+  - Launch EC2 t3.micro for the FastAPI application.
+  - Configure `uvicorn`/`gunicorn` with `systemd` or `supervisord`.
+  - Set up background Celery worker as a secondary process on the same instance.
+  - Configure Caddy or Nginx for HTTPS and reverse proxying.
+7.2 Frontend Deployment
+  - Deploy frontend to Vercel or AWS S3 + CloudFront distribution with HTTPS.
+7.3 CORS & Cognito Production URLs
+  - Setup CORS in FastAPI to allow the production frontend domain.
+  - Ensure Cognito callback/logout URLs match the production frontend domain.
+7.4 Infrastructure Hardening & Cost Management
+  - Set AWS CloudWatch billing alarms ($5 threshold).
+  - Final review of all security groups (API, Judge0, RDS, Redis).
+  - Document procedures to stop EC2 instances during inactivity.

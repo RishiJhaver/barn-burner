@@ -1,0 +1,75 @@
+LeetCode Clone — Further Enhancements & Future Backlog
+
+1. Interactive Swagger UI OAuth 2.0 Authorization Code Flow
+------------------------------------------------------------
+Description:
+Configure FastAPI's security scheme using `OAuth2AuthorizationCodeBearer` instead of plain `HTTPBearer`.
+This enables an interactive OAuth 2.0 login modal directly in the Swagger UI documentation (`/docs`).
+
+How it works:
+1. When a developer/tester opens `http://localhost:8000/docs` and clicks the green "Authorize" button, Swagger UI displays an OAuth2 login prompt.
+2. Clicking "Authorize" redirects the user to the AWS Cognito Hosted UI (or federated social login such as "Sign in with Google / GitHub").
+3. Upon successful login, Cognito redirects back to `http://localhost:8000/docs/oauth2-redirect.html` with an authorization code.
+4. Swagger UI automatically completes the PKCE code exchange and injects the Bearer access token into all subsequent API requests.
+
+Setup Requirements:
+- In AWS Cognito Console (App client -> Hosted UI):
+  Add `http://localhost:8000/docs/oauth2-redirect.html` to "Allowed callback URLs".
+- In FastAPI (`app/main.py`):
+  Configure `swagger_ui_init_oauth`:
+  ```python
+  app = FastAPI(
+      ...,
+      swagger_ui_init_oauth={
+          "clientId": settings.COGNITO_APP_CLIENT_ID,
+          "usePkceWithAuthorizationCodeGrant": True,
+          "scopes": ["openid", "email", "profile"],
+      }
+  )
+  ```
+- In `app/api/deps.py`:
+  Replace or supplement `HTTPBearer` with:
+  ```python
+  oauth2_scheme = OAuth2AuthorizationCodeBearer(
+      authorizationUrl=f"{settings.COGNITO_DOMAIN}/oauth2/authorize",
+      tokenUrl=f"{settings.COGNITO_DOMAIN}/oauth2/token",
+      scopes={"openid": "OpenID", "email": "Email", "profile": "Profile"},
+      auto_error=False,
+  )
+  ```
+
+
+2. Backend OAuth 2.0 Authorization Code Exchange Endpoint (`POST /auth/oauth/token`)
+-------------------------------------------------------------------------------------
+Description:
+An API endpoint that handles server-side token exchange for OAuth 2.0 authorization codes.
+
+How it works:
+1. Frontend application initiates Cognito OAuth 2.0 login and receives a short-lived `code` query parameter on its callback URL (`https://yourdomain.com/callback?code=XXXX`).
+2. Instead of exchanging the code directly on the client side, the frontend posts the code to the backend:
+   `POST /api/v1/auth/oauth/token` with payload: `{"code": "XXXX", "redirect_uri": "https://yourdomain.com/callback"}`.
+3. The backend sends a server-to-server POST request to AWS Cognito's `/oauth2/token` endpoint (`grant_type=authorization_code`).
+4. The backend receives `access_token`, `id_token`, and `refresh_token`.
+5. The backend can either:
+   - Return the tokens in JSON format to the client, OR
+   - Store the tokens inside secure `HttpOnly`, `Secure`, `SameSite=Strict` cookies, completely shielding JWTs from XSS (cross-site scripting) attacks in the browser.
+
+Implementation Outline:
+```python
+@router.post("/oauth/token")
+async def exchange_oauth_code(request: OAuthTokenExchangeRequest):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{settings.COGNITO_DOMAIN}/oauth2/token",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": settings.COGNITO_APP_CLIENT_ID,
+                "code": request.code,
+                "redirect_uri": request.redirect_uri,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
+        return response.json()
+```

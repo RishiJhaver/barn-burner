@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#090b10] text-slate-100 font-sans antialiased;
+  }
+
+  html:not(.dark) body {
+    @apply bg-[#fcfdfe] text-slate-900;
+  }
+}
+
+/* Ambient Iridescent Gradient Mesh */
+.ambient-glow {
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+  filter: blur(100px);
+  opacity: 0.55;
+  border-radius: 9999px;
+  animation: float-ambient 18s ease-in-out infinite alternate;
+}
+
+html:not(.dark) .ambient-glow {
+  opacity: 0.65;
+  filter: blur(90px);
+}
+
+@keyframes float-ambient {
+  0% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  50% {
+    transform: translate(40px, -30px) scale(1.08);
+  }
+  100% {
+    transform: translate(-30px, 20px) scale(0.95);
+  }
+}
+
+/* Bento Grid System with 1px hairline borders */
+.bento-grid-container {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background-color: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(36px);
+  -webkit-backdrop-filter: blur(36px);
+}
+
+.dark .bento-grid-container {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background-color: rgba(12, 14, 20, 0.72);
+  backdrop-filter: blur(36px);
+  -webkit-backdrop-filter: blur(36px);
+}
+
+.bento-cell {
+  border-color: rgba(0, 0, 0, 0.1);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.dark .bento-cell {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.bento-cell:hover {
+  background-color: rgba(0, 0, 0, 0.015);
+}
+
+.dark .bento-cell:hover {
+  background-color: rgba(255, 255, 255, 0.025);
+}
+
+/* Custom Minimalist Scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(140, 150, 170, 0.25);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 150, 170, 0.45);
+}
