@@ -200,6 +200,8 @@ async def get_auth_config() -> AuthConfigResponse:
         mock_cognito=settings.MOCK_COGNITO,
         aws_region=settings.AWS_REGION,
         user_pool_id=settings.COGNITO_USER_POOL_ID or "local-mock-pool",
+        client_id=settings.COGNITO_APP_CLIENT_ID if not settings.MOCK_COGNITO else None,
+        cognito_domain=settings.COGNITO_DOMAIN if not settings.MOCK_COGNITO else None,
     )
 
 

@@ -98,5 +98,7 @@ class AuthConfigResponse(BaseModel):
     mock_cognito: bool
     aws_region: str
     user_pool_id: str
+    client_id: str | None = None
+    cognito_domain: str | None = None
 
 

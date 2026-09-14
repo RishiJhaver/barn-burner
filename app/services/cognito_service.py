@@ -85,11 +85,6 @@ class CognitoService:
                 user_attributes = [
                     {"Name": "email", "Value": email},
                 ]
-                # custom:role if configured in User Pool attributes
-                try:
-                    user_attributes.append({"Name": "custom:role", "Value": role})
-                except Exception:
-                    pass
 
                 resp = self.client.sign_up(
                     ClientId=settings.COGNITO_APP_CLIENT_ID,

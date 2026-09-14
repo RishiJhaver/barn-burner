@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     COGNITO_USER_POOL_ID: str = ""
     COGNITO_APP_CLIENT_ID: str = ""
     COGNITO_ISSUER: str = ""
+    COGNITO_DOMAIN: str = ""
     S3_BUCKET_NAME: str = "leetcode-clone-storage"
     MOCK_S3: bool = True
 
