@@ -74,7 +74,7 @@ class Judge0Service:
         source_code: str,
         language: str,
         stdin: str,
-        expected_output: str,
+        expected_output: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute code against a single testcase.
@@ -98,7 +98,7 @@ class Judge0Service:
         source_code: str,
         language: str,
         stdin: str,
-        expected_output: str,
+        expected_output: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Local execution engine for testing when live Docker Judge0 is not running.
@@ -460,18 +460,19 @@ class Judge0Service:
         source_code: str,
         language: str,
         stdin: str,
-        expected_output: str,
+        expected_output: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute against live Docker Judge0 REST API."""
         language_id = self.get_language_id(language)
-        payload = {
+        payload: Dict[str, Any] = {
             "source_code": source_code,
             "language_id": language_id,
             "stdin": stdin,
-            "expected_output": expected_output,
             "cpu_time_limit": settings.JUDGE0_CPU_TIME_LIMIT,
             "memory_limit": settings.JUDGE0_MEMORY_LIMIT,
         }
+        if expected_output:
+            payload["expected_output"] = expected_output
 
         url = f"{self.base_url}/submissions?base64_encoded=false&wait=true"
         async with httpx.AsyncClient(timeout=15.0) as client:

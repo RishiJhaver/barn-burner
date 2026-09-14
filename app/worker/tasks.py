@@ -156,6 +156,20 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
             template = tmpl_res.scalar_one_or_none()
             driver_code = template.driver_code if template else None
 
+            if not method_name and template and template.starter_code:
+                import re
+                py_m = re.search(r'def\s+([a-zA-Z0-9_]+)\s*\(', template.starter_code)
+                if py_m:
+                    method_name = py_m.group(1)
+                else:
+                    fn_m = re.search(r'(?:var|let|const|function)\s+([a-zA-Z0-9_]+)', template.starter_code)
+                    if fn_m:
+                        method_name = fn_m.group(1)
+                    else:
+                        cpp_m = re.search(r'\w+\s+([a-zA-Z0-9_]+)\s*\(', template.starter_code)
+                        if cpp_m:
+                            method_name = cpp_m.group(1)
+
             executable_code = harness_service.assemble_code(
                 language=submission.language,
                 user_code=submission.code,
@@ -164,14 +178,13 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
             )
 
             batched_stdin = harness_service.batch_inputs(resolved_inputs)
-            batched_expected = f"\n{OUTPUT_DELIMITER}\n".join([o.strip() for o in resolved_outputs])
 
-            # 5. Execute via Judge0 in a SINGLE CALL!
+            # 5. Execute via Judge0 in a SINGLE CALL (raw execution without diffing)
             exec_res = await judge0_service.execute_test_case(
                 source_code=executable_code,
                 language=submission.language,
                 stdin=batched_stdin,
-                expected_output=batched_expected,
+                expected_output=None,
             )
 
             tc_status = exec_res["status"]
@@ -188,11 +201,24 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
                 SubmissionStatus.TIME_LIMIT_EXCEEDED,
                 SubmissionStatus.MEMORY_LIMIT_EXCEEDED,
                 SubmissionStatus.RUNTIME_ERROR,
+                SubmissionStatus.INTERNAL_ERROR,
             ):
                 final_status = tc_status
                 error_message = stderr or exec_res.get("compile_output") or f"Execution failed: {tc_status.value}"
-                sample_results = []
                 passed_count = 0
+                sample_results = [
+                    {
+                        "test_case_id": meta["id"],
+                        "status": final_status.value,
+                        "runtime_ms": max_runtime_ms,
+                        "memory_kb": max_memory_kb,
+                        "stdin": resolved_inputs[i] if meta["is_sample"] else None,
+                        "expected_output": resolved_outputs[i] if meta["is_sample"] else None,
+                        "actual_output": error_message if meta["is_sample"] else None,
+                        "error_message": error_message,
+                    }
+                    for i, meta in enumerate(testcase_meta)
+                ]
                 if resolved_inputs:
                     first_failed_case = {
                         "test_case_number": 1,
@@ -207,9 +233,18 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
                 passed_count = sum(1 for p in parsed if p["passed"])
                 all_passed = (passed_count == len(resolved_inputs))
 
-                final_status = SubmissionStatus.ACCEPTED if all_passed else SubmissionStatus.WRONG_ANSWER
+                # Check if any testcase ran into a runtime error (e.g. starts with "Error:")
+                has_runtime_error = any(p["actual"].startswith("Error:") for p in parsed)
 
-                if not all_passed:
+                if all_passed:
+                    final_status = SubmissionStatus.ACCEPTED
+                    error_message = None
+                elif has_runtime_error:
+                    final_status = SubmissionStatus.RUNTIME_ERROR
+                    first_err = next((p["actual"] for p in parsed if p["actual"].startswith("Error:")), "Runtime error")
+                    error_message = first_err
+                else:
+                    final_status = SubmissionStatus.WRONG_ANSWER
                     first_failed_case = harness_service.extract_first_failure(
                         parsed, resolved_inputs, resolved_outputs
                     )
@@ -218,19 +253,30 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
                         if first_failed_case
                         else "Output did not match expected"
                     )
-                else:
-                    error_message = None
+
+                if not all_passed and not first_failed_case:
+                    first_failed_case = harness_service.extract_first_failure(
+                        parsed, resolved_inputs, resolved_outputs
+                    )
 
                 sample_results = [
                     {
                         "test_case_id": meta["id"],
-                        "status": SubmissionStatus.ACCEPTED.value if p["passed"] else SubmissionStatus.WRONG_ANSWER.value,
+                        "status": (
+                            SubmissionStatus.ACCEPTED.value
+                            if p["passed"]
+                            else (
+                                SubmissionStatus.RUNTIME_ERROR.value
+                                if p["actual"].startswith("Error:")
+                                else SubmissionStatus.WRONG_ANSWER.value
+                            )
+                        ),
                         "runtime_ms": max_runtime_ms,
                         "memory_kb": max_memory_kb,
                         "stdin": resolved_inputs[i] if meta["is_sample"] else None,
                         "expected_output": resolved_outputs[i] if meta["is_sample"] else None,
                         "actual_output": p["actual"] if meta["is_sample"] else None,
-                        "error_message": None if p["passed"] else "Output did not match expected",
+                        "error_message": None if p["passed"] else (p["actual"] if p["actual"].startswith("Error:") else "Output did not match expected"),
                     }
                     for i, (meta, p) in enumerate(zip(testcase_meta, parsed))
                 ]

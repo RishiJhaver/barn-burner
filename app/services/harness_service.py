@@ -362,7 +362,8 @@ int main() {{
 
         target_method_literal = f'"{method_name}"' if method_name else "None"
 
-        driver = f'''# System headers & standard LeetCode imports
+        driver = f'''from __future__ import annotations
+# System headers & standard LeetCode imports
 import sys
 import json
 import math
