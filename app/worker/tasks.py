@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 from app.core.config import get_settings
 from app.models.enums import ProblemSolveStatus, SubmissionKind, SubmissionStatus
+from app.models.problem import Problem
 from app.models.status import UserProblemStatus
 from app.models.submission import Submission
 from app.models.template import ProblemTemplate
@@ -77,24 +78,76 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
                 ttl=300,
             )
 
-            # 2. Query test cases (only sample for 'run', all for 'submit')
-            tc_query = select(TestCase).where(TestCase.problem_id == submission.problem_id)
-            if submission.kind == SubmissionKind.RUN:
-                tc_query = tc_query.where(TestCase.is_sample.is_(True))
-            tc_query = tc_query.order_by(TestCase.id.asc())
+            # 2. Lookup problem to get slug
+            prob_stmt = select(Problem).where(Problem.id == submission.problem_id)
+            prob_res = await db.execute(prob_stmt)
+            problem = prob_res.scalar_one_or_none()
+            slug = problem.slug if problem else None
 
-            tc_result = await db.execute(tc_query)
-            test_cases: List[TestCase] = list(tc_result.scalars().all())
+            # 3. Check for consolidated S3 bundle first
+            bundle = await s3_service.get_problem_testcase_bundle_async(
+                problem_id=submission.problem_id, slug=slug
+            )
 
-            if not test_cases:
-                # Fallback if no test cases exist yet
-                submission.status = SubmissionStatus.ACCEPTED
-                submission.runtime_ms = 10
-                submission.memory_kb = 12000
-                await db.commit()
-                return {"status": "accepted", "test_cases": 0}
+            resolved_inputs: List[str] = []
+            resolved_outputs: List[str] = []
+            testcase_meta: List[Dict[str, Any]] = []
+            method_name: Optional[str] = None
 
-            # 3. Retrieve problem template & stitch with harness
+            if bundle and "test_cases" in bundle and bundle["test_cases"]:
+                method_name = bundle.get("method_name")
+                raw_cases = bundle["test_cases"]
+                if submission.kind == SubmissionKind.RUN:
+                    sample_cases = [tc for tc in raw_cases if tc.get("is_sample", False)]
+                    active_cases = sample_cases if sample_cases else raw_cases[:3]
+                else:
+                    active_cases = raw_cases
+
+                for idx, tc in enumerate(active_cases):
+                    inp = tc.get("input", "")
+                    out = tc.get("expected_output") or tc.get("expected") or ""
+                    resolved_inputs.append(str(inp))
+                    resolved_outputs.append(str(out))
+                    testcase_meta.append({
+                        "id": tc.get("id", idx + 1),
+                        "is_sample": tc.get("is_sample", False),
+                    })
+            else:
+                # Fallback to database test cases
+                tc_query = select(TestCase).where(TestCase.problem_id == submission.problem_id)
+                if submission.kind == SubmissionKind.RUN:
+                    tc_query = tc_query.where(TestCase.is_sample.is_(True))
+                tc_query = tc_query.order_by(TestCase.id.asc())
+
+                tc_result = await db.execute(tc_query)
+                db_cases: List[TestCase] = list(tc_result.scalars().all())
+
+                if not db_cases:
+                    submission.status = SubmissionStatus.ACCEPTED
+                    submission.runtime_ms = 10
+                    submission.memory_kb = 12000
+                    await db.commit()
+                    return {"status": "accepted", "test_cases": 0}
+
+                for tc in db_cases:
+                    stdin = (
+                        await s3_service.get_text_async(tc.input)
+                        if tc.input.startswith("testcases/")
+                        else tc.input
+                    )
+                    expected_out = (
+                        await s3_service.get_text_async(tc.expected_output)
+                        if tc.expected_output.startswith("testcases/")
+                        else tc.expected_output
+                    )
+                    resolved_inputs.append(stdin)
+                    resolved_outputs.append(expected_out)
+                    testcase_meta.append({
+                        "id": tc.id,
+                        "is_sample": tc.is_sample,
+                    })
+
+            # 4. Retrieve problem template & stitch with harness
             tmpl_stmt = select(ProblemTemplate).where(
                 ProblemTemplate.problem_id == submission.problem_id,
                 ProblemTemplate.language == submission.language,
@@ -107,29 +160,13 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
                 language=submission.language,
                 user_code=submission.code,
                 custom_driver=driver_code,
+                method_name=method_name,
             )
-
-            # Resolve all test cases from S3
-            resolved_inputs = []
-            resolved_outputs = []
-            for tc in test_cases:
-                stdin = (
-                    await s3_service.get_text_async(tc.input)
-                    if tc.input.startswith("testcases/")
-                    else tc.input
-                )
-                expected_out = (
-                    await s3_service.get_text_async(tc.expected_output)
-                    if tc.expected_output.startswith("testcases/")
-                    else tc.expected_output
-                )
-                resolved_inputs.append(stdin)
-                resolved_outputs.append(expected_out)
 
             batched_stdin = harness_service.batch_inputs(resolved_inputs)
             batched_expected = f"\n{OUTPUT_DELIMITER}\n".join([o.strip() for o in resolved_outputs])
 
-            # 4. Execute via Judge0 in a SINGLE CALL!
+            # 5. Execute via Judge0 in a SINGLE CALL!
             exec_res = await judge0_service.execute_test_case(
                 source_code=executable_code,
                 language=submission.language,
@@ -143,6 +180,8 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
             stdout = exec_res.get("stdout", "")
             stderr = exec_res.get("stderr", "")
 
+            first_failed_case = None
+
             # Check fatal errors
             if tc_status in (
                 SubmissionStatus.COMPILATION_ERROR,
@@ -154,37 +193,55 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
                 error_message = stderr or exec_res.get("compile_output") or f"Execution failed: {tc_status.value}"
                 sample_results = []
                 passed_count = 0
+                if resolved_inputs:
+                    first_failed_case = {
+                        "test_case_number": 1,
+                        "total_test_cases": len(resolved_inputs),
+                        "input": harness_service.truncate_text(resolved_inputs[0]),
+                        "expected_output": harness_service.truncate_text(resolved_outputs[0]) if resolved_outputs else "",
+                        "actual_output": harness_service.truncate_text(error_message),
+                    }
             else:
                 # Parse batched outputs against each testcase
                 parsed = harness_service.parse_outputs(stdout, resolved_outputs)
                 passed_count = sum(1 for p in parsed if p["passed"])
-                all_passed = (passed_count == len(test_cases))
+                all_passed = (passed_count == len(resolved_inputs))
 
                 final_status = SubmissionStatus.ACCEPTED if all_passed else SubmissionStatus.WRONG_ANSWER
-                first_failed = [p for p in parsed if not p["passed"]]
-                error_message = None if all_passed else f"Failed on test case {first_failed[0]['index']}"
+
+                if not all_passed:
+                    first_failed_case = harness_service.extract_first_failure(
+                        parsed, resolved_inputs, resolved_outputs
+                    )
+                    error_message = (
+                        f"Failed on test case {first_failed_case['test_case_number']}"
+                        if first_failed_case
+                        else "Output did not match expected"
+                    )
+                else:
+                    error_message = None
 
                 sample_results = [
                     {
-                        "test_case_id": tc.id,
+                        "test_case_id": meta["id"],
                         "status": SubmissionStatus.ACCEPTED.value if p["passed"] else SubmissionStatus.WRONG_ANSWER.value,
                         "runtime_ms": max_runtime_ms,
                         "memory_kb": max_memory_kb,
-                        "stdin": resolved_inputs[i] if tc.is_sample else None,
-                        "expected_output": resolved_outputs[i] if tc.is_sample else None,
-                        "actual_output": p["actual"] if tc.is_sample else None,
+                        "stdin": resolved_inputs[i] if meta["is_sample"] else None,
+                        "expected_output": resolved_outputs[i] if meta["is_sample"] else None,
+                        "actual_output": p["actual"] if meta["is_sample"] else None,
                         "error_message": None if p["passed"] else "Output did not match expected",
                     }
-                    for i, (tc, p) in enumerate(zip(test_cases, parsed))
+                    for i, (meta, p) in enumerate(zip(testcase_meta, parsed))
                 ]
 
-            # 5. Update Submission entity in PostgreSQL
+            # 6. Update Submission entity in PostgreSQL
             submission.status = final_status
             submission.runtime_ms = max_runtime_ms
             submission.memory_kb = max_memory_kb
             submission.error_message = error_message
 
-            # 6. Update UserProblemStatus if official submit
+            # 7. Update UserProblemStatus if official submit
             if submission.kind == SubmissionKind.SUBMIT:
                 status_stmt = select(UserProblemStatus).where(
                     (UserProblemStatus.user_id == submission.user_id)
@@ -211,7 +268,7 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
 
             await db.commit()
 
-        # 6. Cache final detailed evaluation result in Redis
+        # 8. Cache final detailed evaluation result in Redis
         cache_payload = {
             "id": str(submission.id),
             "user_id": str(submission.user_id),
@@ -223,8 +280,9 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
             "memory_kb": submission.memory_kb,
             "error_message": submission.error_message,
             "passed_test_cases": passed_count,
-            "total_test_cases": len(test_cases),
+            "total_test_cases": len(resolved_inputs),
             "sample_results": sample_results,
+            "first_failed_case": first_failed_case,
             "created_at": submission.created_at.isoformat(),
             "updated_at": submission.updated_at.isoformat(),
         }

@@ -59,6 +59,15 @@ class TestCaseExecutionResult(BaseModel):
     error_message: Optional[str] = None
 
 
+class FirstFailedTestCase(BaseModel):
+    """Detailed breakdown of the first failing test case."""
+    test_case_number: int
+    total_test_cases: int
+    input: str
+    expected_output: str
+    actual_output: str
+
+
 class SubmissionDetailResponse(BaseModel):
     """Comprehensive submission evaluation verdict and metrics."""
     id: uuid.UUID
@@ -75,6 +84,7 @@ class SubmissionDetailResponse(BaseModel):
     passed_test_cases: Optional[int] = None
     total_test_cases: Optional[int] = None
     sample_results: Optional[List[TestCaseExecutionResult]] = None
+    first_failed_case: Optional[FirstFailedTestCase] = None
     created_at: datetime
     updated_at: datetime
 

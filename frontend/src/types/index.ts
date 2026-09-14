@@ -76,6 +76,14 @@ export interface TestCaseExecutionResult {
   error_message?: string | null;
 }
 
+export interface FirstFailedTestCase {
+  test_case_number: number;
+  total_test_cases: number;
+  input: string;
+  expected_output: string;
+  actual_output: string;
+}
+
 export interface SubmissionDetail {
   id: string;
   user_id: string;
@@ -91,6 +99,7 @@ export interface SubmissionDetail {
   passed_test_cases?: number | null;
   total_test_cases?: number | null;
   sample_results?: TestCaseExecutionResult[] | null;
+  first_failed_case?: FirstFailedTestCase | null;
   created_at: string;
   updated_at: string;
 }

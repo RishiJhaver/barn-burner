@@ -102,8 +102,44 @@ export const VerdictModal: React.FC<VerdictModalProps> = ({ submission, onClose 
           </div>
         </div>
 
-        {/* Error Details (if any) */}
-        {submission.error_message && (
+        {/* First Failed Test Case (LeetCode-style diff) */}
+        {submission.first_failed_case && (
+          <div className="mb-6 rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 space-y-3 font-mono text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-rose-600 dark:text-rose-400 font-sans text-xs">
+                Failed on Case {submission.first_failed_case.test_case_number} of {submission.first_failed_case.total_test_cases}
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-500 font-bold">
+                WRONG ANSWER
+              </span>
+            </div>
+
+            <div>
+              <p className="text-slate-400 text-[10px] uppercase font-sans mb-1">Input:</p>
+              <pre className="p-2 rounded bg-black/5 dark:bg-black/40 text-slate-800 dark:text-slate-200 overflow-x-auto whitespace-pre-wrap">
+                {submission.first_failed_case.input || '(empty)'}
+              </pre>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-rose-500 text-[10px] uppercase font-sans mb-1">Your Output:</p>
+                <pre className="p-2 rounded bg-rose-500/10 border border-rose-500/20 text-rose-700 dark:text-rose-300 overflow-x-auto whitespace-pre-wrap">
+                  {submission.first_failed_case.actual_output || '(empty)'}
+                </pre>
+              </div>
+              <div>
+                <p className="text-emerald-500 text-[10px] uppercase font-sans mb-1">Expected Output:</p>
+                <pre className="p-2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 overflow-x-auto whitespace-pre-wrap">
+                  {submission.first_failed_case.expected_output || '(empty)'}
+                </pre>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Error Details (if any and not already covered by first_failed_case) */}
+        {submission.error_message && !submission.first_failed_case && (
           <div className="mb-6 rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4">
             <p className="text-xs font-semibold text-rose-600 dark:text-rose-400 mb-1">Execution Message:</p>
             <pre className="font-mono text-xs text-rose-500 dark:text-rose-300 whitespace-pre-wrap">

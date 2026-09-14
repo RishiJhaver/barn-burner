@@ -3,7 +3,7 @@
 import os
 import logging
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -93,6 +93,35 @@ class S3Service:
 
         return input_key, output_key
 
+    def get_problem_testcase_bundle(
+        self, problem_id: int, slug: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch consolidated testcase bundle JSON from S3 if available."""
+        import json
+        candidates = [f"testcases/{problem_id}/bundle.json"]
+        if slug:
+            candidates.append(f"testcases/{slug}/bundle.json")
+
+        for key in candidates:
+            content = self.get_text(key)
+            if content and content.strip():
+                try:
+                    data = json.loads(content)
+                    if isinstance(data, dict) and "test_cases" in data:
+                        return data
+                except Exception as exc:
+                    logger.warning("Failed to parse S3 bundle at %s: %s", key, exc)
+        return None
+
+    def put_problem_testcase_bundle(
+        self, problem_id: int, bundle_data: Dict[str, Any], slug: Optional[str] = None
+    ) -> str:
+        """Store consolidated testcase bundle JSON into S3."""
+        import json
+        key = f"testcases/{slug if slug else problem_id}/bundle.json"
+        self.put_text(key, json.dumps(bundle_data, indent=2))
+        return key
+
     def generate_avatar_presigned_url(
         self, user_id: str, content_type: str = "image/webp", expires_in: int = 3600
     ) -> Dict[str, Any]:
@@ -156,6 +185,18 @@ class S3Service:
         return await asyncio.to_thread(
             self.generate_avatar_presigned_url, user_id, content_type, expires_in
         )
+
+    async def get_problem_testcase_bundle_async(
+        self, problem_id: int, slug: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        import asyncio
+        return await asyncio.to_thread(self.get_problem_testcase_bundle, problem_id, slug)
+
+    async def put_problem_testcase_bundle_async(
+        self, problem_id: int, bundle_data: Dict[str, Any], slug: Optional[str] = None
+    ) -> str:
+        import asyncio
+        return await asyncio.to_thread(self.put_problem_testcase_bundle, problem_id, bundle_data, slug)
 
 
 # Singleton instance

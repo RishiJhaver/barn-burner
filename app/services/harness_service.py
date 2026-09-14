@@ -10,6 +10,7 @@ test cases into a single Judge0 execution run for:
 
 import json
 import logging
+import math
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -27,6 +28,7 @@ class HarnessService:
         language: str,
         user_code: str,
         custom_driver: Optional[str] = None,
+        method_name: Optional[str] = None,
     ) -> str:
         """
         Stitch user's Solution code with driver harness.
@@ -51,18 +53,18 @@ class HarnessService:
 
             # If custom driver doesn't contain an active print/output loop, wrap with harness
             if lang in ("python", "py", "python3") and "print(" not in custom_driver and "sys.stdout" not in custom_driver:
-                return HarnessService._default_python_harness(assembled)
+                return HarnessService._default_python_harness(assembled, method_name)
             return assembled
 
         # 2. Built-in Language-Specific Harnesses
         if lang in ("cpp", "c++"):
-            return HarnessService._default_cpp_harness(user_code)
+            return HarnessService._default_cpp_harness(user_code, method_name)
         elif lang in ("python", "py", "python3"):
-            return HarnessService._default_python_harness(user_code)
+            return HarnessService._default_python_harness(user_code, method_name)
         elif lang in ("java",):
-            return HarnessService._default_java_harness(user_code)
+            return HarnessService._default_java_harness(user_code, method_name)
         elif lang in ("javascript", "js"):
-            return HarnessService._default_js_harness(user_code)
+            return HarnessService._default_js_harness(user_code, method_name)
 
         # Fallback: return raw code if no wrapper applies
         return user_code
@@ -71,7 +73,7 @@ class HarnessService:
     # C++ HARNESS GENERATOR
     # ==========================================
     @staticmethod
-    def _default_cpp_harness(user_code: str) -> str:
+    def _default_cpp_harness(user_code: str, method_name: Optional[str] = None) -> str:
         """
         Parses the C++ Solution class method signature, injects type deserializers,
         and generates a main() loop that calls the user's function for each testcase.
@@ -82,15 +84,27 @@ class HarnessService:
 
         # Extract method signature from `class Solution`
         # Matches: [return_type] [method_name]([params])
-        method_pattern = re.compile(
-            r'([a-zA-Z0-9_:<>*&]+(?:\s+[a-zA-Z0-9_:<>*&]+)?)\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*\{',
-            re.MULTILINE
-        )
-        match = method_pattern.search(user_code)
+        match = None
+        if method_name:
+            target_pattern = re.compile(
+                r'([a-zA-Z0-9_:<>*&]+(?:\s+[a-zA-Z0-9_:<>*&]+)?)\s+(' + re.escape(method_name) + r')\s*\(([^)]*)\)\s*\{',
+                re.MULTILINE
+            )
+            match = target_pattern.search(user_code)
+
+        if not match:
+            method_pattern = re.compile(
+                r'([a-zA-Z0-9_:<>*&]+(?:\s+[a-zA-Z0-9_:<>*&]+)?)\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*\{',
+                re.MULTILINE
+            )
+            match = method_pattern.search(user_code)
 
         call_generation = ""
         if match:
             return_type = match.group(1).strip()
+            # FIX: Strip C++ visibility specifiers or qualifiers like 'public:', 'virtual', 'inline'
+            return_type = re.sub(r'^(?:public|private|protected)\s*:\s*', '', return_type).strip()
+            return_type = re.sub(r'^(?:virtual|inline|static)\s+', '', return_type).strip()
             method_name = match.group(2).strip()
             params_raw = match.group(3).strip()
 
@@ -100,25 +114,35 @@ class HarnessService:
 
             for idx, p in enumerate(params):
                 p_clean = p.strip()
-                # e.g. "vector<vector<int>>& img1" -> type: "vector<vector<int>>", name: "img1"
                 parts = p_clean.rsplit(None, 1)
-                p_type = parts[0].replace("&", "").strip() if len(parts) > 1 else "string"
+                # FIX (Bug 3 - C++ fallback parser producing type-mismatched variables):
+                # When parameter type cannot be split cleanly, default to auto so type deduction matches.
+                p_type = parts[0].replace("&", "").strip() if len(parts) > 1 else "auto"
                 arg_name = f"arg{idx}"
                 arg_names.append(arg_name)
 
                 # Select parser based on C++ type
+                # FIX (Bug 3 - C++ type parser coverage): Added long long, char, float, vector<long long> parsers.
                 if "vector<vector<int>>" in p_type:
                     parser_fn = "parseMatrixInt"
                 elif "vector<int>" in p_type:
                     parser_fn = "parseVectorInt"
                 elif "vector<string>" in p_type:
                     parser_fn = "parseVectorString"
+                elif "vector<long long>" in p_type or "vector<long>" in p_type:
+                    parser_fn = "parseVectorLong"
                 elif "string" in p_type:
                     parser_fn = "parseString"
                 elif "bool" in p_type:
                     parser_fn = "parseBool"
-                elif "double" in p_type or "float" in p_type:
+                elif "double" in p_type:
                     parser_fn = "parseDouble"
+                elif "float" in p_type:
+                    parser_fn = "parseFloat"
+                elif "long long" in p_type or "long" in p_type:
+                    parser_fn = "parseLongLong"
+                elif "char" in p_type:
+                    parser_fn = "parseChar"
                 elif "int" in p_type:
                     parser_fn = "parseInt"
                 else:
@@ -132,16 +156,27 @@ class HarnessService:
             args_pass = ", ".join(arg_names)
             readers_block = "\n".join(arg_readers)
 
+            # FIX (Bug 4 - C++ zero-argument void methods crashing generator):
+            # Guard against IndexError when method has return_type == "void" and 0 arguments (arg_names is empty).
             if return_type == "void":
-                exec_call = f"        solver.{method_name}({args_pass});\n        printResult({arg_names[0]});"
+                if arg_names:
+                    exec_call = f"        solver.{method_name}({args_pass});\n        printResult({arg_names[0]});"
+                else:
+                    exec_call = f'        solver.{method_name}();\n        cout << "null";'
             else:
                 exec_call = f"        auto result = solver.{method_name}({args_pass});\n        printResult(result);"
 
             call_generation = f"""{readers_block}
 {exec_call}"""
         else:
-            # Fallback if regex couldn't match method
-            call_generation = "        cout << \"Compiled successfully\";"
+            # FIX (Bug 1 - C++ stdin desync on unmatched method signature):
+            # When method signature fails to match, drain all remaining lines for this testcase block
+            # until TESTCASE_DELIMITER or EOF so that subsequent testcases don't read leftover lines.
+            call_generation = f"""        while (cin.peek() != EOF && line != "{TESTCASE_DELIMITER}") {{
+            getline(cin, line);
+            if (line == "{TESTCASE_DELIMITER}") break;
+        }}
+        cout << "Error: Method signature not matched";"""
 
         driver = f"""#include <iostream>
 #include <vector>
@@ -162,12 +197,26 @@ int parseInt(const string& s) {{
     try {{ return stoi(s); }} catch(...) {{ return 0; }}
 }}
 
+long long parseLongLong(const string& s) {{
+    try {{ return stoll(s); }} catch(...) {{ return 0LL; }}
+}}
+
 double parseDouble(const string& s) {{
     try {{ return stod(s); }} catch(...) {{ return 0.0; }}
 }}
 
+float parseFloat(const string& s) {{
+    try {{ return stof(s); }} catch(...) {{ return 0.0f; }}
+}}
+
 bool parseBool(const string& s) {{
     return s == "true" || s == "1";
+}}
+
+char parseChar(string s) {{
+    if (s.size() >= 2 && s.front() == '\'' && s.back() == '\'') return s[1];
+    if (s.size() >= 2 && s.front() == '"' && s.back() == '"') return s[1];
+    return s.empty() ? ' ' : s[0];
 }}
 
 string parseString(string s) {{
@@ -181,6 +230,20 @@ vector<int> parseVectorInt(const string& s) {{
     vector<int> res;
     stringstream ss(s);
     char c; int n;
+    while (ss >> c) {{
+        if (isdigit(c) || c == '-') {{
+            ss.putback(c);
+            ss >> n;
+            res.push_back(n);
+        }}
+    }}
+    return res;
+}}
+
+vector<long long> parseVectorLong(const string& s) {{
+    vector<long long> res;
+    stringstream ss(s);
+    char c; long long n;
     while (ss >> c) {{
         if (isdigit(c) || c == '-') {{
             ss.putback(c);
@@ -229,7 +292,9 @@ vector<vector<int>> parseMatrixInt(const string& s) {{
 void printResult(int val) {{ cout << val; }}
 void printResult(long long val) {{ cout << val; }}
 void printResult(double val) {{ cout << val; }}
+void printResult(float val) {{ cout << val; }}
 void printResult(bool val) {{ cout << (val ? "true" : "false"); }}
+void printResult(char val) {{ cout << "'" << val << "'"; }}
 void printResult(const string& val) {{ cout << "\\"" << val << "\\""; }}
 
 template<typename T>
@@ -287,13 +352,15 @@ int main() {{
     # PYTHON HARNESS GENERATOR
     # ==========================================
     @staticmethod
-    def _default_python_harness(user_code: str) -> str:
+    def _default_python_harness(user_code: str, method_name: Optional[str] = None) -> str:
         """
         Wraps Python Solution class with dynamic method dispatcher
         reading testcases from stdin separated by TESTCASE_DELIMITER.
         """
         if "class Solution" not in user_code and "def " not in user_code:
             return user_code
+
+        target_method_literal = f'"{method_name}"' if method_name else "None"
 
         driver = f'''# System headers & standard LeetCode imports
 import sys
@@ -310,9 +377,22 @@ from typing import *
 # === HIDDEN LEETCODE HARNESS ===
 def _parse_arg(raw: str):
     raw = raw.strip()
+    # FIX (Bug 8 - Python boolean literal parsing case-sensitivity):
+    # json.loads fails on title-cased "True" / "False". Parse booleans case-insensitively before fallback.
+    if raw.lower() == "true":
+        return True
+    if raw.lower() == "false":
+        return False
+
     try:
         return json.loads(raw)
     except Exception:
+        # Fallback to ast.literal_eval to safely parse Python literals like (1, 2) or [True, False]
+        import ast
+        try:
+            return ast.literal_eval(raw)
+        except Exception:
+            pass
         if raw.isdigit() or (raw.startswith('-') and raw[1:].isdigit()):
             return int(raw)
         try:
@@ -332,15 +412,22 @@ def _run_harness():
     if not test_blocks and raw_input_data.strip():
         test_blocks = [raw_input_data.strip()]
 
+    target_method = {target_method_literal}
     solve_fn = None
     if "Solution" in globals() and isinstance(globals()["Solution"], type):
         try:
             solver = Solution()
-            methods = [m for m in dir(solver) if not m.startswith("_") and callable(getattr(solver, m))]
-            if methods:
-                solve_fn = getattr(solver, methods[0])
+            if target_method and hasattr(solver, target_method) and callable(getattr(solver, target_method)):
+                solve_fn = getattr(solver, target_method)
+            else:
+                methods = [m for m in dir(solver) if not m.startswith("_") and callable(getattr(solver, m))]
+                if methods:
+                    solve_fn = getattr(solver, methods[0])
         except Exception:
             pass
+
+    if solve_fn is None and target_method and target_method in globals() and callable(globals()[target_method]):
+        solve_fn = globals()[target_method]
 
     if solve_fn is None:
         if "solution" in globals() and callable(globals()["solution"]):
@@ -375,7 +462,9 @@ def _run_harness():
 
         try:
             res = solve_fn(*args)
-            if isinstance(res, (list, dict, bool)):
+            # FIX (Bug 5 - Python tuple return values not JSON-serialized):
+            # Include tuple in serialization check so tuples are serialized as JSON arrays rather than str() "(1, 2)".
+            if isinstance(res, (list, dict, bool, tuple)):
                 output_str = json.dumps(res, separators=(',', ':'))
             else:
                 output_str = str(res)
@@ -393,16 +482,24 @@ if __name__ == "__main__":
     # JAVA HARNESS GENERATOR
     # ==========================================
     @staticmethod
-    def _default_java_harness(user_code: str) -> str:
+    def _default_java_harness(user_code: str, method_name: Optional[str] = None) -> str:
         """
         Wraps Java Solution class in Main class with standard deserializers and testcase loop.
         """
-        # Parse method signature from Java Solution
-        method_pattern = re.compile(
-            r'public\s+([\w\[\]<>]+)\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*\{',
-            re.MULTILINE
-        )
-        match = method_pattern.search(user_code)
+        match = None
+        if method_name:
+            target_pattern = re.compile(
+                r'(?:public\s+|protected\s+)?(?:static\s+|final\s+)?([\w\[\]<>]+)\s+(' + re.escape(method_name) + r')\s*\(([^)]*)\)\s*\{',
+                re.MULTILINE
+            )
+            match = target_pattern.search(user_code)
+
+        if not match:
+            method_pattern = re.compile(
+                r'(?:public\s+|protected\s+)?(?:static\s+|final\s+)?([\w\[\]<>]+)\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*\{',
+                re.MULTILINE
+            )
+            match = method_pattern.search(user_code)
 
         readers_block = ""
         exec_call = ""
@@ -412,7 +509,9 @@ if __name__ == "__main__":
             method_name = match.group(2).strip()
             params_raw = match.group(3).strip()
 
-            params = [p.strip() for p in params_raw.split(",") if p.strip()]
+            # FIX (Bug 2 - Java naive comma-split breaking generic parameters):
+            # Use bracket-aware splitter _split_cpp_params so parameters like Map<String, Integer> aren't split on inner commas.
+            params = HarnessService._split_cpp_params(params_raw)
             arg_names = []
             arg_readers = []
 
@@ -422,22 +521,38 @@ if __name__ == "__main__":
                 arg_name = f"arg{idx}"
                 arg_names.append(arg_name)
 
+                # FIX (Bug 3 - Java fallback parser producing type-mismatched/wrong-typed variables):
+                # Added support for long, float, char, String[], List<Integer>, List<String>.
+                # If unknown, fall back to String and parseString to avoid type mismatch declarations.
                 if "int[][]" in p_type:
                     parser_fn = "parse2DIntArray"
                 elif "int[]" in p_type:
                     parser_fn = "parseIntArray"
+                elif "long[]" in p_type:
+                    parser_fn = "parseLongArray"
                 elif "String[]" in p_type:
                     parser_fn = "parseStringArray"
+                elif "List<Integer>" in p_type or "List<int>" in p_type:
+                    parser_fn = "parseListInt"
+                elif "List<String>" in p_type:
+                    parser_fn = "parseListString"
                 elif "String" in p_type:
                     parser_fn = "parseString"
-                elif "boolean" in p_type:
+                elif "boolean" in p_type or "Boolean" in p_type:
                     parser_fn = "Boolean.parseBoolean"
-                elif "int" in p_type:
+                elif "long" in p_type or "Long" in p_type:
+                    parser_fn = "Long.parseLong"
+                elif "int" in p_type or "Integer" in p_type:
                     parser_fn = "Integer.parseInt"
-                elif "double" in p_type:
+                elif "double" in p_type or "Double" in p_type:
                     parser_fn = "Double.parseDouble"
+                elif "float" in p_type or "Float" in p_type:
+                    parser_fn = "Float.parseFloat"
+                elif "char" in p_type or "Character" in p_type:
+                    parser_fn = "parseChar"
                 else:
                     parser_fn = "parseString"
+                    p_type = "String"
 
                 if idx == 0:
                     arg_readers.append(f"            {p_type} {arg_name} = {parser_fn}(line);")
@@ -447,10 +562,22 @@ if __name__ == "__main__":
             readers_block = "\n".join(arg_readers)
             args_pass = ", ".join(arg_names)
 
+            # FIX (Bug 4 - Java zero-argument void methods crashing generator):
+            # Guard against IndexError when method has return_type == "void" and 0 arguments (arg_names is empty).
             if return_type == "void":
-                exec_call = f"            solver.{method_name}({args_pass});\n            printResult({arg_names[0]});"
+                if arg_names:
+                    exec_call = f"            solver.{method_name}({args_pass});\n            printResult({arg_names[0]});"
+                else:
+                    exec_call = f'            solver.{method_name}();\n            System.out.print("null");'
             else:
                 exec_call = f"            var result = solver.{method_name}({args_pass});\n            printResult(result);"
+        else:
+            # FIX (Bug 1 - Java stdin desync on unmatched method signature):
+            # Drain remaining lines for this testcase block until delimiter or EOF so subsequent testcases don't desync.
+            readers_block = f"""            while ((line = reader.readLine()) != null) {{
+                if (line.trim().equals("{TESTCASE_DELIMITER}")) break;
+            }}"""
+            exec_call = '            System.out.print("Error: Method signature not matched");'
 
         driver = f"""import java.io.*;
 import java.util.*;
@@ -484,6 +611,15 @@ public class Main {{
         return res;
     }}
 
+    static long[] parseLongArray(String s) {{
+        s = s.replaceAll("[\\[\\]\\\\s]", "");
+        if (s.isEmpty()) return new long[0];
+        String[] parts = s.split(",");
+        long[] res = new long[parts.length];
+        for (int i = 0; i < parts.length; i++) res[i] = Long.parseLong(parts[i]);
+        return res;
+    }}
+
     static int[][] parse2DIntArray(String s) {{
         s = s.trim();
         if (s.equals("[]")) return new int[0][0];
@@ -496,6 +632,43 @@ public class Main {{
             }}
         }}
         return list.toArray(new int[list.size()][]);
+    }}
+
+    static String[] parseStringArray(String s) {{
+        s = s.trim();
+        if (s.startsWith("[") && s.endsWith("]")) s = s.substring(1, s.length() - 1).trim();
+        if (s.isEmpty()) return new String[0];
+        List<String> list = new ArrayList<>();
+        boolean inStr = false;
+        StringBuilder cur = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {{
+            char c = s.charAt(i);
+            if (c == '"') {{
+                if (inStr) {{ list.add(cur.toString()); cur.setLength(0); }}
+                inStr = !inStr;
+            }} else if (inStr) {{
+                cur.append(c);
+            }}
+        }}
+        return list.toArray(new String[0]);
+    }}
+
+    static char parseChar(String s) {{
+        s = s.trim();
+        if (s.startsWith("'") && s.endsWith("'") && s.length() >= 3) return s.charAt(1);
+        if (s.startsWith("\\"") && s.endsWith("\\"")) return s.substring(1, s.length() - 1).charAt(0);
+        return s.isEmpty() ? ' ' : s.charAt(0);
+    }}
+
+    static List<Integer> parseListInt(String s) {{
+        int[] arr = parseIntArray(s);
+        List<Integer> list = new ArrayList<>();
+        for (int v : arr) list.add(v);
+        return list;
+    }}
+
+    static List<String> parseListString(String s) {{
+        return Arrays.asList(parseStringArray(s));
     }}
 
     static String parseString(String s) {{
@@ -520,11 +693,18 @@ public class Main {{
     # JAVASCRIPT HARNESS GENERATOR
     # ==========================================
     @staticmethod
-    def _default_js_harness(user_code: str) -> str:
+    def _default_js_harness(user_code: str, method_name: Optional[str] = None) -> str:
         """
         Wraps JavaScript Solution with dynamic Node.js fs reader and JSON parser.
         Supports both `var solve = function(...)` and `class Solution`.
         """
+        target_name_literal = f'"{method_name}"' if method_name else "null"
+
+        # FIX (Bug 6 - JavaScript user code embedded unsanitized in template literals):
+        # Extract candidate function name in Python via regex instead of embedding raw user_code in a JS template literal.
+        fn_match = re.search(r'(?:var|let|const|function)\s+([a-zA-Z_$][\w$]*)', user_code)
+        fallback_fn_name = f'"{fn_match.group(1)}"' if fn_match else "null"
+
         driver = f"""const fs = require('fs');
 
 // === 1. USER SOLUTION ===
@@ -537,26 +717,39 @@ function _runHarness() {{
 
     let solveFn = null;
     let context = null;
+    const targetMethod = {target_name_literal};
 
     // 1. Check if class Solution exists
     if (typeof Solution === 'function') {{
         try {{
             const inst = new Solution();
-            const methods = Object.getOwnPropertyNames(Solution.prototype).filter(m => m !== 'constructor');
-            if (methods.length > 0) {{
-                solveFn = inst[methods[0]];
+            if (targetMethod && typeof inst[targetMethod] === 'function') {{
+                solveFn = inst[targetMethod];
                 context = inst;
+            }} else {{
+                const methods = Object.getOwnPropertyNames(Solution.prototype).filter(m => m !== 'constructor');
+                if (methods.length > 0) {{
+                    solveFn = inst[methods[0]];
+                    context = inst;
+                }}
             }}
         }} catch(e) {{}}
     }}
 
-    // 2. Check global function (e.g. var largestOverlap = function(...) or function largestOverlap(...))
+    // 2. Check global function (e.g. targetMethod or var largestOverlap = function(...))
+    if (!solveFn && targetMethod) {{
+        try {{
+            const candidate = eval(targetMethod);
+            if (typeof candidate === 'function') solveFn = candidate;
+        }} catch(e) {{}}
+    }}
+
+    // FIX (Bug 6 - Safe function resolution without template literal string interpolation):
     if (!solveFn) {{
-        const fnMatch = `{user_code}`.match(/(?:var|let|const|function)\\s+([a-zA-Z_$][\\w$]*)/);
-        if (fnMatch) {{
-            const fnName = fnMatch[1];
+        const fallbackName = {fallback_fn_name};
+        if (fallbackName) {{
             try {{
-                const candidate = eval(fnName);
+                const candidate = eval(fallbackName);
                 if (typeof candidate === 'function') solveFn = candidate;
             }} catch(e) {{}}
         }}
@@ -634,20 +827,77 @@ _runHarness();
 
     @staticmethod
     def _outputs_match(actual: str, expected: str) -> bool:
-        """Compare actual output against expected output with JSON normalization."""
+        """Compare actual output against expected output with JSON normalization and float tolerance."""
         if actual == expected:
             return True
 
         if actual.strip().lower() == expected.strip().lower():
             return True
 
-        # Try JSON comparison (handles [0, 1] == [0,1], [[0]] == [[0]])
+        # Helper for approximate float comparison in nested JSON structures
+        def _approx_equal(a: Any, b: Any, tol: float = 1e-5) -> bool:
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+                return math.isclose(a, b, rel_tol=tol, abs_tol=tol)
+            if isinstance(a, list) and isinstance(b, list):
+                if len(a) != len(b):
+                    return False
+                return all(_approx_equal(x, y, tol) for x, y in zip(a, b))
+            if isinstance(a, dict) and isinstance(b, dict):
+                if a.keys() != b.keys():
+                    return False
+                return all(_approx_equal(a[k], b[k], tol) for k in a)
+            return a == b
+
+        # Try JSON comparison (handles [0, 1] == [0,1], [[0]] == [[0]], and nested floats)
         try:
-            return json.loads(actual) == json.loads(expected)
+            act_obj = json.loads(actual)
+            exp_obj = json.loads(expected)
+            if _approx_equal(act_obj, exp_obj):
+                return True
         except Exception:
             pass
 
+        # FIX (Bug 7 - _outputs_match: add floating-point tolerance):
+        # Support scalar float/double comparisons with tolerance (e.g. 0.50000 vs 0.5 or 3.1415926 vs 3.14159)
+        try:
+            act_f = float(actual.strip())
+            exp_f = float(expected.strip())
+            if math.isclose(act_f, exp_f, rel_tol=1e-5, abs_tol=1e-5):
+                return True
+        except (ValueError, TypeError, OverflowError):
+            pass
+
         return False
+
+    @staticmethod
+    def truncate_text(text: Optional[str], max_len: int = 1000) -> str:
+        """Truncate long string to avoid browser overload on massive testcase inputs."""
+        if not text:
+            return ""
+        if len(text) <= max_len:
+            return text
+        return text[:max_len] + f"... (truncated, total {len(text)} chars)"
+
+    @staticmethod
+    def extract_first_failure(
+        parsed_results: List[Dict[str, Any]],
+        inputs: List[str],
+        expected_outputs: List[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Identify the first failed test case with input, expected, and actual values."""
+        for idx, item in enumerate(parsed_results):
+            if not item.get("passed"):
+                inp = inputs[idx] if idx < len(inputs) else ""
+                exp = expected_outputs[idx] if idx < len(expected_outputs) else ""
+                act = item.get("actual", "")
+                return {
+                    "test_case_number": idx + 1,
+                    "total_test_cases": len(parsed_results),
+                    "input": HarnessService.truncate_text(inp),
+                    "expected_output": HarnessService.truncate_text(exp),
+                    "actual_output": HarnessService.truncate_text(act),
+                }
+        return None
 
 
 harness_service = HarnessService()
