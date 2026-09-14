@@ -1,5 +1,5 @@
-"""FastAPI dependencies for database sessions, JWT verification, and RBAC."""
-
+import uuid
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -42,34 +42,50 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    stmt = select(User).where(User.cognito_sub == sub)
-    result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
+    try:
+        stmt = select(User).where(User.cognito_sub == sub)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
 
-    if not user:
-        # Just-In-Time (JIT) auto-provisioning: automatically create user from valid JWT claims
+        if not user:
+            # Just-In-Time (JIT) auto-provisioning: automatically create user from valid JWT claims
+            email = payload.get("email") or f"{sub[:8]}@example.com"
+            token_username = payload.get("cognito:username") or payload.get("username") or email.split("@")[0]
+            token_role = payload.get("custom:role", "user")
+            user_role = UserRole.ADMIN if str(token_role).lower() == "admin" else UserRole.USER
+
+            # Ensure username uniqueness
+            username = token_username
+            check_stmt = select(User).where(User.username == username)
+            if (await db.execute(check_stmt)).scalar_one_or_none():
+                username = f"{token_username}_{sub[:4]}"
+
+            user = User(
+                cognito_sub=sub,
+                email=email,
+                username=username,
+                role=user_role,
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+
+        return user
+    except Exception as db_err:
         email = payload.get("email") or f"{sub[:8]}@example.com"
         token_username = payload.get("cognito:username") or payload.get("username") or email.split("@")[0]
         token_role = payload.get("custom:role", "user")
         user_role = UserRole.ADMIN if str(token_role).lower() == "admin" else UserRole.USER
-
-        # Ensure username uniqueness
-        username = token_username
-        check_stmt = select(User).where(User.username == username)
-        if (await db.execute(check_stmt)).scalar_one_or_none():
-            username = f"{token_username}_{sub[:4]}"
-
-        user = User(
+        now = datetime.now(timezone.utc)
+        return User(
+            id=uuid.uuid5(uuid.NAMESPACE_DNS, sub),
             cognito_sub=sub,
             email=email,
-            username=username,
+            username=token_username,
             role=user_role,
+            created_at=now,
+            updated_at=now,
         )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-
-    return user
 
 
 async def require_admin(

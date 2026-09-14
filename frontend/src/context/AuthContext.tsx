@@ -1,11 +1,18 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, UserRole } from '../types';
+import { AuthConfig, SignUpResponse, User, UserRole } from '../types';
 import { authApi } from '../api/authApi';
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
   isLoading: boolean;
+  authConfig: AuthConfig | null;
+  login: (usernameOrEmail: string, password: string) => Promise<void>;
+  register: (username: string, email: string, password: string, role?: UserRole) => Promise<SignUpResponse>;
+  confirmSignUp: (username: string, code: string) => Promise<{ status: string; message: string }>;
+  resendCode: (username: string) => Promise<SignUpResponse>;
+  forgotPassword: (usernameOrEmail: string) => Promise<{ status: string; message: string; destination?: string }>;
+  confirmForgotPassword: (username: string, code: string, newPassword: string) => Promise<{ status: string; message: string }>;
   loginDemo: (role?: UserRole, username?: string, email?: string) => Promise<void>;
   loginWithToken: (token: string) => Promise<void>;
   logout: () => void;
@@ -18,10 +25,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('cyber_token'));
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
 
-  // Initialize auth state
+  // Initialize auth state and fetch config
   useEffect(() => {
     const initAuth = async () => {
+      // 1. Fetch Auth Gateway Configuration
+      try {
+        const config = await authApi.getAuthConfig();
+        setAuthConfig(config);
+      } catch (err) {
+        console.warn('Failed to load auth config:', err);
+      }
+
+      // 2. Resolve Stored Token
       const storedToken = localStorage.getItem('cyber_token');
       if (storedToken) {
         try {
@@ -35,17 +52,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
       // Auto-login with default Coder demo account on first visit
-      await loginDemo('user', 'neo_coder', 'neo@cybercode.matrix');
+      await loginDemo('user', 'alex_coder', 'alex@codegrid.dev');
       setIsLoading(false);
     };
 
     initAuth();
   }, []);
 
+  const login = async (usernameOrEmail: string, password: string) => {
+    setIsLoading(true);
+    try {
+      const res = await authApi.login(usernameOrEmail, password);
+      localStorage.setItem('cyber_token', res.access_token);
+      setToken(res.access_token);
+      setUser(res.user);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const register = async (username: string, email: string, password: string, role: UserRole = 'user') => {
+    return await authApi.register(username, email, password, role);
+  };
+
+  const confirmSignUp = async (username: string, code: string) => {
+    return await authApi.confirmSignUp(username, code);
+  };
+
+  const resendCode = async (username: string) => {
+    return await authApi.resendCode(username);
+  };
+
+  const forgotPassword = async (usernameOrEmail: string) => {
+    return await authApi.forgotPassword(usernameOrEmail);
+  };
+
+  const confirmForgotPassword = async (username: string, code: string, newPassword: string) => {
+    return await authApi.confirmForgotPassword(username, code, newPassword);
+  };
+
   const loginDemo = async (
     role: UserRole = 'user',
-    username: string = 'neo_coder',
-    email: string = 'neo@cybercode.matrix'
+    username: string = 'alex_coder',
+    email: string = 'alex@codegrid.dev'
   ) => {
     setIsLoading(true);
     try {
@@ -88,6 +137,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         token,
         isLoading,
+        authConfig,
+        login,
+        register,
+        confirmSignUp,
+        resendCode,
+        forgotPassword,
+        confirmForgotPassword,
         loginDemo,
         loginWithToken,
         logout,

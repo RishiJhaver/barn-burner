@@ -1,6 +1,6 @@
-"""Authentication endpoints for user sync, profile retrieval, and demo token generation."""
-
+import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -11,10 +11,26 @@ from app.core.config import get_settings
 from app.core.security import create_demo_access_token
 from app.models.enums import UserRole
 from app.models.user import User
-from app.schemas.user import DemoTokenRequest, DemoTokenResponse, UserResponse, UserSyncRequest
+from app.schemas.user import (
+    AuthConfigResponse,
+    AuthResponse,
+    ConfirmForgotPasswordRequest,
+    ConfirmSignUpRequest,
+    DemoTokenRequest,
+    DemoTokenResponse,
+    ForgotPasswordRequest,
+    LoginRequest,
+    RegisterRequest,
+    ResendCodeRequest,
+    SignUpResponse,
+    UserResponse,
+    UserSyncRequest,
+)
+from app.services.cognito_service import cognito_service
 
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -151,3 +167,165 @@ async def admin_check(
         "user_id": str(admin_user.id),
         "role": admin_user.role.value,
     }
+
+
+# ==========================================
+# AWS COGNITO DIRECT AUTHENTICATION GATEWAY
+# ==========================================
+
+@router.get(
+    "/config",
+    response_model=AuthConfigResponse,
+    summary="Get Authentication Gateway Configuration",
+)
+async def get_auth_config() -> AuthConfigResponse:
+    """Returns public authentication mode details for the frontend."""
+    return AuthConfigResponse(
+        mock_cognito=settings.MOCK_COGNITO,
+        aws_region=settings.AWS_REGION,
+        user_pool_id=settings.COGNITO_USER_POOL_ID or "local-mock-pool",
+    )
+
+
+@router.post(
+    "/register",
+    response_model=SignUpResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register New User Account",
+    description="Signs up a new user via AWS Cognito (or local simulator), initiating email verification.",
+)
+async def register_user(request: RegisterRequest) -> SignUpResponse:
+    res = cognito_service.sign_up(
+        username=request.username,
+        email=str(request.email),
+        password=request.password,
+        role=request.role.value,
+    )
+    return SignUpResponse(**res)
+
+
+@router.post(
+    "/confirm-signup",
+    summary="Confirm Registration Email OTP Code",
+    description="Verifies the email confirmation code to activate the user's account.",
+)
+async def confirm_sign_up(request: ConfirmSignUpRequest) -> Dict[str, Any]:
+    cognito_service.confirm_sign_up(
+        username=request.username,
+        confirmation_code=request.confirmation_code,
+    )
+    return {
+        "status": "confirmed",
+        "message": "Account successfully verified! You can now sign in.",
+    }
+
+
+@router.post(
+    "/resend-code",
+    summary="Resend Confirmation Code",
+    description="Resends the email confirmation code for an unverified account.",
+)
+async def resend_code(request: ResendCodeRequest) -> Dict[str, Any]:
+    res = cognito_service.resend_confirmation_code(request.username)
+    return {
+        "status": "sent",
+        "message": "Verification code has been resent.",
+        **res,
+    }
+
+
+@router.post(
+    "/login",
+    response_model=AuthResponse,
+    summary="User Login via AWS Cognito",
+    description="Authenticates credentials against AWS Cognito or Mock Mode, syncs user into PostgreSQL, and returns JWT tokens.",
+)
+async def login_user(
+    request: LoginRequest,
+    db: AsyncSession = Depends(get_db),
+) -> AuthResponse:
+    auth_result = cognito_service.initiate_auth(
+        username_or_email=request.username_or_email,
+        password=request.password,
+    )
+
+    claims = auth_result.get("claims", {})
+    sub = claims.get("sub") or str(uuid.uuid4())
+    email = claims.get("email") or f"{request.username_or_email}@codegrid.dev"
+    token_username = claims.get("cognito:username") or claims.get("username") or request.username_or_email
+    role_str = claims.get("custom:role", "user")
+    user_role = UserRole.ADMIN if str(role_str).lower() == "admin" else UserRole.USER
+
+    # Database synchronization with fallback if database is offline
+    user = None
+    try:
+        stmt = select(User).where((User.cognito_sub == sub) | (User.email == email))
+        res = await db.execute(stmt)
+        user = res.scalar_one_or_none()
+
+        if user:
+            if user.username != token_username:
+                user.username = token_username
+            user.role = user_role
+            await db.commit()
+            await db.refresh(user)
+        else:
+            user = User(
+                cognito_sub=sub,
+                email=email,
+                username=token_username,
+                role=user_role,
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+    except Exception as db_err:
+        logger.warning(f"Database sync encountered error: {db_err}. Providing ephemeral user profile.")
+        now = datetime.now(timezone.utc)
+        user = User(
+            id=uuid.uuid4(),
+            cognito_sub=sub,
+            email=email,
+            username=token_username,
+            role=user_role,
+            created_at=now,
+            updated_at=now,
+        )
+
+    return AuthResponse(
+        access_token=auth_result["access_token"],
+        token_type=auth_result.get("token_type", "Bearer"),
+        expires_in=auth_result.get("expires_in", 3600),
+        user=UserResponse.model_validate(user),
+        role=user.role,
+    )
+
+
+@router.post(
+    "/forgot-password",
+    summary="Request Password Reset OTP",
+)
+async def forgot_password(request: ForgotPasswordRequest) -> Dict[str, Any]:
+    res = cognito_service.forgot_password(request.username_or_email)
+    return {
+        "status": "code_sent",
+        "message": "Password reset code sent to your email.",
+        **res,
+    }
+
+
+@router.post(
+    "/confirm-forgot-password",
+    summary="Confirm Password Reset",
+)
+async def confirm_forgot_password(request: ConfirmForgotPasswordRequest) -> Dict[str, Any]:
+    cognito_service.confirm_forgot_password(
+        username=request.username,
+        confirmation_code=request.confirmation_code,
+        new_password=request.new_password,
+    )
+    return {
+        "status": "success",
+        "message": "Password successfully reset! You can now log in with your new password.",
+    }
+

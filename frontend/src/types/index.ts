@@ -113,3 +113,26 @@ export interface UserStats {
   hard_solved: number;
   total_solved: number;
 }
+
+export interface AuthConfig {
+  mock_cognito: boolean;
+  aws_region: string;
+  user_pool_id: string;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  user: User;
+  role: UserRole;
+}
+
+export interface SignUpResponse {
+  user_sub?: string;
+  user_confirmed: boolean;
+  delivery_medium: string;
+  destination?: string;
+  demo_hint?: string;
+}
+
