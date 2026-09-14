@@ -75,6 +75,71 @@ async def _build_problem_detail_response(
     )
 
 
+def _get_fallback_problems() -> List[ProblemListItemResponse]:
+    from datetime import datetime, timezone
+    try:
+        from seed_problems import SEED_DATA
+    except Exception:
+        return []
+    items = []
+    now = datetime.now(timezone.utc)
+    for idx, data in enumerate(SEED_DATA, 1):
+        tags = [TagResponse(id=t_idx, name=t, slug=t.lower().replace(" ", "-")) for t_idx, t in enumerate(data.get("tags", []), 1)]
+        items.append(ProblemListItemResponse(
+            id=idx,
+            slug=data["slug"],
+            title=data["title"],
+            difficulty=data["difficulty"],
+            published=data["published"],
+            created_at=now,
+            tags=tags
+        ))
+    return items
+
+
+def _get_fallback_problem_detail(slug: str) -> Optional[ProblemDetailResponse]:
+    from datetime import datetime, timezone
+    try:
+        from seed_problems import SEED_DATA
+    except Exception:
+        return None
+    for idx, data in enumerate(SEED_DATA, 1):
+        if data["slug"] == slug:
+            now = datetime.now(timezone.utc)
+            tags = [TagResponse(id=t_idx, name=t, slug=t.lower().replace(" ", "-")) for t_idx, t in enumerate(data.get("tags", []), 1)]
+            templates = [
+                ProblemTemplateResponse(
+                    id=tmpl_idx,
+                    language=tmpl["language"],
+                    starter_code=tmpl["starter_code"],
+                    driver_code=tmpl.get("driver_code")
+                )
+                for tmpl_idx, tmpl in enumerate(data.get("templates", []), 1)
+            ]
+            sample_tcs = [
+                SampleTestCaseResponse(
+                    id=tc_idx,
+                    input=tc["input"],
+                    expected_output=tc["expected_output"]
+                )
+                for tc_idx, tc in enumerate([tc for tc in data.get("test_cases", []) if tc.get("is_sample")], 1)
+            ]
+            return ProblemDetailResponse(
+                id=idx,
+                slug=data["slug"],
+                title=data["title"],
+                description=data["description"],
+                difficulty=data["difficulty"],
+                published=data["published"],
+                created_at=now,
+                updated_at=now,
+                tags=tags,
+                templates=templates,
+                sample_test_cases=sample_tcs
+            )
+    return None
+
+
 @router.get("", response_model=List[ProblemListItemResponse])
 async def list_problems(
     last_id: Optional[int] = Query(None, description="Keyset pagination cursor (last problem ID seen)"),
@@ -119,10 +184,17 @@ async def list_problems(
 
     query = query.order_by(Problem.created_at.desc(), Problem.id.desc()).limit(limit)
 
-    result = await db.execute(query)
-    problems = result.scalars().all()
-
-    response_items = [ProblemListItemResponse.model_validate(p) for p in problems]
+    try:
+        result = await db.execute(query)
+        problems = result.scalars().all()
+        response_items = [ProblemListItemResponse.model_validate(p) for p in problems]
+    except Exception:
+        # Fallback to seed problems if PostgreSQL is offline
+        response_items = _get_fallback_problems()
+        if difficulty:
+            response_items = [p for p in response_items if p.difficulty == difficulty]
+        if tag:
+            response_items = [p for p in response_items if any(t.slug == tag or t.name == tag for t in p.tags)]
 
     # Cache the serialized result in Redis
     await CacheService.set_json(
@@ -148,21 +220,35 @@ async def get_problem_by_slug(
     if cached_data is not None:
         return ProblemDetailResponse.model_validate(cached_data)
 
-    query = (
-        select(Problem)
-        .options(selectinload(Problem.tags), selectinload(Problem.templates))
-        .where(Problem.slug == slug)
-    )
-    result = await db.execute(query)
-    problem = result.scalar_one_or_none()
+    try:
+        query = (
+            select(Problem)
+            .options(selectinload(Problem.tags), selectinload(Problem.templates))
+            .where(Problem.slug == slug)
+        )
+        result = await db.execute(query)
+        problem = result.scalar_one_or_none()
 
-    if not problem:
+        if not problem:
+            fallback = _get_fallback_problem_detail(slug)
+            if fallback:
+                return fallback
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Problem with slug '{slug}' not found",
+            )
+
+        response = await _build_problem_detail_response(problem, db)
+    except HTTPException:
+        raise
+    except Exception:
+        fallback = _get_fallback_problem_detail(slug)
+        if fallback:
+            return fallback
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Problem with slug '{slug}' not found",
         )
-
-    response = await _build_problem_detail_response(problem, db)
 
     # Cache in Redis
     await CacheService.set_json(

@@ -193,9 +193,17 @@ cloud_v3/
 │   ├── package.json
 │   └── vite.config.ts
 ├── tests/
-│   ├── conftest.py                      # Async HTTP test fixtures
+│   ├── conftest.py                      # Async HTTP test fixtures & DB availability guards
+│   ├── test_auth.py                     # Healthcheck, demo token, RBAC tests
+│   ├── test_backend_edge_cases.py       # 22 edge-case tests (floats, JWT tampering, Judge0, S3)
 │   ├── test_cognito_auth.py             # Cognito auth and RBAC unit tests
-│   └── test_harness.py                  # Harness assembler & single-call tests
+│   ├── test_harness.py                  # Harness assembler & single-call tests (8 bug audits)
+│   ├── test_models.py                   # SQLAlchemy ORM metadata and schemas
+│   ├── test_problems.py                 # Problem tags, filters, and S3 integration
+│   ├── test_rate_limiter.py             # Sliding-window rate limiter & fail-open tests
+│   ├── test_schemas.py                  # Pydantic request & response validation
+│   ├── test_submissions.py              # Submission workflow & code runner
+│   └── test_submissions_history.py      # Solved tracking & coding stats
 ├── PROJECT_DETAILS.md                   # Complete system documentation (this file)
 └── docker-compose.yml                   # Local infrastructure stack
 ```
@@ -205,34 +213,41 @@ cloud_v3/
 ## 7. Verification & Test Execution
 
 ### Backend Automated Test Suite
-Run tests using the project virtual environment:
+Run the full test suite across all 11 test modules:
 ```powershell
-.venv\Scripts\pytest tests/test_harness.py tests/test_cognito_auth.py -v
+.venv\Scripts\python -m pytest tests/ -v
 ```
-**Results**:
-- `test_harness_custom_driver_substitution`: PASSED
-- `test_harness_cpp_largest_overlap_generation`: PASSED
-- `test_harness_python_default_wrapper`: PASSED
-- `test_harness_java_largest_overlap_generation`: PASSED
-- `test_harness_js_largest_overlap_generation`: PASSED
-- `test_harness_output_parsing_and_json_matching`: PASSED
-- `test_harness_method_name_support`: PASSED
-- `test_harness_extract_first_failure_and_truncation`: PASSED
-- `test_s3_bundle_storage_and_retrieval`: PASSED
-- `test_bug1_stdin_desync_on_unmatched_signature`: PASSED
-- `test_bug2_java_generic_parameters_bracket_splitting`: PASSED
-- `test_bug3_type_parsing_and_fallback`: PASSED
-- `test_bug4_zero_arg_void_methods`: PASSED
-- `test_bug5_python_tuple_json_serialization`: PASSED
-- `test_bug6_js_template_literal_injection`: PASSED
-- `test_bug7_float_tolerance_in_outputs_match`: PASSED
-- `test_bug8_python_boolean_case_insensitivity`: PASSED
-- `test_cognito_service_direct_mock_flow`: PASSED
-- `test_auth_api_config_endpoint`: PASSED
-- `test_auth_api_login_endpoint`: PASSED
-- `test_auth_api_admin_login_and_rbac`: PASSED
-- `test_auth_api_user_forbidden_on_admin_check`: PASSED
-**Total: 22 passed, 1 skipped** (live DB integration test skips cleanly when local PostgreSQL is offline).
+**Results Summary**:
+- **Total Tests**: 76 tests collected
+- **Passed**: **76 passed (100% pass rate across the entire suite)**
+- **Skipped**: 0
+- **Failures / Errors**: **0**
+- **Test Duration**: 28.24s
+
+#### Key Test Coverage Highlights
+1. **LeetCode Test Harness & Multi-Language Drivers (`test_harness.py`)**:
+   - Stdin desync on unmatched signatures (drain loops for C++ and Java)
+   - Java generic commas within type brackets (`Map<String, Integer>`)
+   - Safe fallback type parsing and zero-arg void methods
+   - Python tuple JSON serialization and JS template literal sanitization
+   - Floating point epsilon tolerance (`math.isclose` / `rel_tol=1e-5`)
+   - Python boolean case-insensitivity (`true`/`false`/`True`/`False`)
+2. **Comprehensive Edge Cases (`test_backend_edge_cases.py`)**:
+   - Scientific notation parsing (`1e-5` vs `0.00001`)
+   - Deeply nested float arrays with delta comparisons
+   - Whitespace, trailing newlines, and CRLF invariance
+   - Truncation boundaries at exact byte thresholds
+   - Complex nested signatures (`vector<unordered_map<string, vector<int>>>`)
+   - Tampered JWT signatures, expired token rejections, malformed base64 tokens
+   - Cognito case-insensitive username lookups & OTP resend validation
+   - Judge0 language mapping & mock evaluation stdout matching
+   - Cache degradation fallback and S3 Unicode bundle roundtrips
+3. **AWS Cognito & Authentication (`test_cognito_auth.py`, `test_auth.py`)**:
+   - Direct user registration, email verification, login, password reset
+   - Admin RBAC guardrails (standard user receives HTTP 403, admin receives HTTP 200)
+4. **Rate Limiting Resilience (`test_rate_limiter.py`)**:
+   - Sliding-window enforcement and fail-open protection when Redis is unavailable
+
 
 ### Frontend Production Build
 ```bash

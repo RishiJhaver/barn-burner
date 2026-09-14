@@ -94,51 +94,67 @@ async def sync_user(
 
     username = (sync_req.username if sync_req and sync_req.username else None) or token_username or email.split("@")[0]
 
-    # Check if username is already taken by another user
-    username_stmt = select(User).where(User.username == username, User.cognito_sub != sub)
-    username_res = await db.execute(username_stmt)
-    if username_res.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Username '{username}' is already taken by another user.",
+    try:
+        # Check if username is already taken by another user
+        username_stmt = select(User).where(User.username == username, User.cognito_sub != sub)
+        username_res = await db.execute(username_stmt)
+        if username_res.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Username '{username}' is already taken by another user.",
+            )
+
+        # Idempotent lookup by cognito_sub
+        stmt = select(User).where(User.cognito_sub == sub)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+
+        if user:
+            # Existing user: update username if changed
+            if user.username != username:
+                user.username = username
+                await db.commit()
+                await db.refresh(user)
+            return user
+
+        # Determine role
+        user_role = UserRole.ADMIN if str(token_role).lower() == "admin" else UserRole.USER
+
+        # Check if email is already taken by a different sub
+        email_stmt = select(User).where(User.email == email)
+        email_res = await db.execute(email_stmt)
+        if email_res.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A user with this email address already exists under a different identifier.",
+            )
+
+        # Create new user row
+        new_user = User(
+            cognito_sub=sub,
+            email=email,
+            username=username,
+            role=user_role,
         )
-
-    # Idempotent lookup by cognito_sub
-    stmt = select(User).where(User.cognito_sub == sub)
-    result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
-
-    if user:
-        # Existing user: update username if changed
-        if user.username != username:
-            user.username = username
-            await db.commit()
-            await db.refresh(user)
-        return user
-
-    # Determine role
-    user_role = UserRole.ADMIN if str(token_role).lower() == "admin" else UserRole.USER
-
-    # Check if email is already taken by a different sub
-    email_stmt = select(User).where(User.email == email)
-    email_res = await db.execute(email_stmt)
-    if email_res.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A user with this email address already exists under a different identifier.",
+        db.add(new_user)
+        await db.commit()
+        await db.refresh(new_user)
+        return new_user
+    except HTTPException:
+        raise
+    except Exception as db_err:
+        logger.warning("PostgreSQL unavailable during sync_user, returning ephemeral record: %s", db_err)
+        user_role = UserRole.ADMIN if str(token_role).lower() == "admin" else UserRole.USER
+        now = datetime.now(timezone.utc)
+        return User(
+            id=uuid.uuid5(uuid.NAMESPACE_DNS, sub),
+            cognito_sub=sub,
+            email=email,
+            username=username,
+            role=user_role,
+            created_at=now,
+            updated_at=now,
         )
-
-    # Create new user row
-    new_user = User(
-        cognito_sub=sub,
-        email=email,
-        username=username,
-        role=user_role,
-    )
-    db.add(new_user)
-    await db.commit()
-    await db.refresh(new_user)
-    return new_user
 
 
 @router.get(

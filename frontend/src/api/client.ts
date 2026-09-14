@@ -23,8 +23,9 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Token expired or invalid
-      // Optional: localStorage.removeItem('cyber_token');
+      // Token is invalid or expired
+      localStorage.removeItem('cyber_token');
+      window.dispatchEvent(new Event('auth:unauthorized'));
     }
     return Promise.reject(error);
   }

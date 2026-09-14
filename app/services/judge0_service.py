@@ -52,6 +52,23 @@ class Judge0Service:
             raise ValueError(f"Unsupported language for execution: {language}")
         return LANGUAGE_ID_MAP[lang_key]
 
+    @staticmethod
+    def _is_output_matching(stdout: str, expected_output: str) -> bool:
+        if not expected_output or not expected_output.strip():
+            return True
+        from app.services.harness_service import harness_service, OUTPUT_DELIMITER
+        act_str = stdout.strip()
+        exp_str = expected_output.strip()
+
+        if OUTPUT_DELIMITER in act_str:
+            act_chunks = [c.strip() for c in act_str.split(OUTPUT_DELIMITER) if c.strip()]
+            exp_chunks = [c.strip() for c in exp_str.split(OUTPUT_DELIMITER) if c.strip()]
+            if len(act_chunks) != len(exp_chunks):
+                return False
+            return all(harness_service._outputs_match(a, e) for a, e in zip(act_chunks, exp_chunks))
+
+        return harness_service._outputs_match(act_str, exp_str)
+
     async def execute_test_case(
         self,
         source_code: str,
@@ -161,8 +178,9 @@ class Judge0Service:
                         "compile_output": err if is_syntax else None,
                     }
 
+                is_correct = Judge0Service._is_output_matching(proc.stdout, expected_output)
                 return {
-                    "status": SubmissionStatus.ACCEPTED,
+                    "status": SubmissionStatus.ACCEPTED if is_correct else SubmissionStatus.WRONG_ANSWER,
                     "runtime_ms": elapsed_ms,
                     "memory_kb": 14200,
                     "stdout": proc.stdout,
@@ -233,8 +251,9 @@ class Judge0Service:
                         "compile_output": err if is_syntax else None,
                     }
 
+                is_correct = Judge0Service._is_output_matching(proc.stdout, expected_output)
                 return {
-                    "status": SubmissionStatus.ACCEPTED,
+                    "status": SubmissionStatus.ACCEPTED if is_correct else SubmissionStatus.WRONG_ANSWER,
                     "runtime_ms": elapsed_ms,
                     "memory_kb": 22000,
                     "stdout": proc.stdout,
@@ -315,8 +334,9 @@ class Judge0Service:
                             "compile_output": None,
                         }
 
+                    is_correct = Judge0Service._is_output_matching(run_proc.stdout, expected_output)
                     return {
-                        "status": SubmissionStatus.ACCEPTED,
+                        "status": SubmissionStatus.ACCEPTED if is_correct else SubmissionStatus.WRONG_ANSWER,
                         "runtime_ms": elapsed_ms,
                         "memory_kb": 8000,
                         "stdout": run_proc.stdout,
@@ -397,8 +417,9 @@ class Judge0Service:
                             "compile_output": None,
                         }
 
+                    is_correct = Judge0Service._is_output_matching(run_proc.stdout, expected_output)
                     return {
-                        "status": SubmissionStatus.ACCEPTED,
+                        "status": SubmissionStatus.ACCEPTED if is_correct else SubmissionStatus.WRONG_ANSWER,
                         "runtime_ms": elapsed_ms,
                         "memory_kb": 30000,
                         "stdout": run_proc.stdout,
@@ -465,7 +486,7 @@ class Judge0Service:
                     "runtime_ms": 0,
                     "memory_kb": 0,
                     "stdout": "",
-                    "stderr": f"Judge0 execution error: {str(exc)}",
+                    "stderr": "Judge execution service unavailable. Please retry shortly.",
                     "compile_output": None,
                 }
 

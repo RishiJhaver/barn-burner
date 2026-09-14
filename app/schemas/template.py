@@ -21,6 +21,7 @@ class ProblemTemplateUpdate(BaseModel):
 class ProblemTemplateResponse(ProblemTemplateBase):
     id: int
     problem_id: int
+    driver_code: Optional[str] = Field(default=None, exclude=True)
     created_at: datetime
     updated_at: datetime
 

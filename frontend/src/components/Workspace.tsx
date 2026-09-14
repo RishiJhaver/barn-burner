@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import {
   ArrowLeft,
@@ -16,6 +16,8 @@ import {
   ChevronUp,
   ChevronDown,
   ArrowUpRight,
+  GripVertical,
+  GripHorizontal,
 } from 'lucide-react';
 import { Problem, ProblemDifficulty, SupportedLanguage, SubmissionDetail } from '../types';
 import { submissionsApi } from '../api/submissionsApi';
@@ -73,6 +75,86 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
   const [runResult, setRunResult] = useState<SubmissionDetail | null>(null);
   const [historyItems, setHistoryItems] = useState<SubmissionDetail[]>([]);
   const [historyLoading, setHistoryLoading] = useState<boolean>(false);
+
+  // Resizable split pane layout state
+  const [leftWidthPercent, setLeftWidthPercent] = useState<number>(45);
+  const [consoleHeight, setConsoleHeight] = useState<number>(230);
+  const [isDraggingHorizontal, setIsDraggingHorizontal] = useState<boolean>(false);
+  const [isDraggingVertical, setIsDraggingVertical] = useState<boolean>(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rightPanelRef = useRef<HTMLDivElement>(null);
+
+  // Horizontal Resizer: Drag left/right to resize Problem Description vs Code/Console
+  const handleHorizontalPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    setIsDraggingHorizontal(true);
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const relativeX = moveEvent.clientX - rect.left;
+      const percent = (relativeX / rect.width) * 100;
+      // Clamp between 20% and 80%
+      const clamped = Math.min(Math.max(percent, 20), 80);
+      setLeftWidthPercent(clamped);
+    };
+
+    const onPointerUp = () => {
+      setIsDraggingHorizontal(false);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  };
+
+  // Vertical Resizer: Drag up/down to resize Monaco Editor vs Test Cases / Output Console
+  const handleVerticalPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    setIsDraggingVertical(true);
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      if (!rightPanelRef.current) return;
+      const rect = rightPanelRef.current.getBoundingClientRect();
+      // Distance from bottom of right panel
+      const newHeight = rect.bottom - moveEvent.clientY;
+      // Clamp between 80px and 75% of right panel height
+      const maxHeight = Math.max(200, rect.height * 0.75);
+      const clamped = Math.min(Math.max(newHeight, 80), maxHeight);
+      setConsoleHeight(clamped);
+      if (!consoleOpen) {
+        setConsoleOpen(true);
+      }
+    };
+
+    const onPointerUp = () => {
+      setIsDraggingVertical(false);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  };
+
+  // Prevent text selection and maintain cursor styling across iframe/editor boundaries during drag
+  useEffect(() => {
+    if (isDraggingHorizontal) {
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    } else if (isDraggingVertical) {
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+    } else {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    return () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isDraggingHorizontal, isDraggingVertical]);
 
   // Load starter template when language or problem changes
   useEffect(() => {
@@ -248,9 +330,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
       </div>
 
       {/* Main Split Screen */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+      <div
+        ref={containerRef}
+        style={{ '--left-w': `${leftWidthPercent}%` } as React.CSSProperties}
+        className="flex-1 flex flex-col md:flex-row overflow-hidden relative"
+      >
         {/* LEFT PANEL: Problem Details & Submissions */}
-        <div className="w-full md:w-1/2 flex flex-col border-b md:border-b-0 md:border-r border-black/10 dark:border-white/10 bg-white/70 dark:bg-[#0c0e14]/75 backdrop-blur-2xl overflow-hidden">
+        <div
+          style={{ width: typeof window !== 'undefined' && window.innerWidth >= 768 ? `${leftWidthPercent}%` : undefined }}
+          className="w-full md:w-[var(--left-w)] flex flex-col border-b md:border-b-0 border-black/10 dark:border-white/10 bg-white/70 dark:bg-[#0c0e14]/75 backdrop-blur-2xl overflow-hidden shrink-0"
+        >
           {/* Left Tabs */}
           <div className="flex items-center gap-2 border-b border-black/10 dark:border-white/10 bg-black/[0.01] dark:bg-white/[0.01] px-4 pt-2 text-xs">
             <button
@@ -377,8 +466,22 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
           </div>
         </div>
 
+        {/* Horizontal Drag Handle (Left / Right) */}
+        <div
+          onPointerDown={handleHorizontalPointerDown}
+          className={`hidden md:flex w-2.5 relative items-center justify-center cursor-col-resize select-none bg-black/[0.03] dark:bg-white/[0.03] hover:bg-blue-500/20 active:bg-blue-500/40 border-l border-r border-black/[0.06] dark:border-white/[0.06] transition-colors z-20 shrink-0 ${
+            isDraggingHorizontal ? 'bg-blue-500/30 dark:bg-blue-500/40' : ''
+          }`}
+          title="Drag horizontally to resize problem description and code editor"
+        >
+          <GripVertical className="h-4 w-4 text-slate-400/60 dark:text-slate-500 hover:text-blue-500" />
+        </div>
+
         {/* RIGHT PANEL: Monaco Editor & Interactive Console */}
-        <div className="w-full md:w-1/2 flex flex-col overflow-hidden bg-white/50 dark:bg-[#07090e]/60 backdrop-blur-xl">
+        <div
+          ref={rightPanelRef}
+          className="flex-1 flex flex-col overflow-hidden bg-white/50 dark:bg-[#07090e]/60 backdrop-blur-xl min-w-0"
+        >
           {/* Monaco Editor Container */}
           <div className="flex-1 relative overflow-hidden">
             <Editor
@@ -399,6 +502,17 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
                 padding: { top: 14, bottom: 14 },
               }}
             />
+          </div>
+
+          {/* Vertical Drag Handle (Up / Down) */}
+          <div
+            onPointerDown={handleVerticalPointerDown}
+            className={`h-2.5 relative flex items-center justify-center cursor-row-resize select-none border-t border-black/[0.08] dark:border-white/[0.08] bg-black/[0.02] dark:bg-white/[0.02] hover:bg-blue-500/20 active:bg-blue-500/40 transition-colors z-10 shrink-0 ${
+              isDraggingVertical ? 'bg-blue-500/30 dark:bg-blue-500/40' : ''
+            }`}
+            title="Drag vertically to resize code editor and testcases panel"
+          >
+            <GripHorizontal className="h-4 w-4 text-slate-400/60 dark:text-slate-500 hover:text-blue-500" />
           </div>
 
           {/* Console Drawer & Action Footer */}
@@ -443,9 +557,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
               </button>
             </div>
 
-            {/* Collapsible Console Drawer Body */}
+            {/* Collapsible Console Drawer Body with Dynamic Resizable Height */}
             {consoleOpen && (
-              <div className="h-44 overflow-y-auto p-4 bg-black/[0.02] dark:bg-black/30 font-mono text-xs scrollbar-thin">
+              <div
+                style={{ height: `${consoleHeight}px` }}
+                className="overflow-y-auto p-4 bg-black/[0.02] dark:bg-black/30 font-mono text-xs scrollbar-thin"
+              >
                 {consoleTab === 'testcases' ? (
                   <div className="space-y-3">
                     {problem.sample_test_cases && problem.sample_test_cases.length > 0 ? (

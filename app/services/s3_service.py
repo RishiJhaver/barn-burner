@@ -158,7 +158,7 @@ class S3Service:
             logger.error("Failed to generate presigned URL for avatar: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to generate upload URL: {str(exc)}",
+                detail="Failed to generate upload URL. Please try again later.",
             )
 
     # Asynchronous non-blocking wrappers using asyncio.to_thread

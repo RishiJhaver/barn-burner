@@ -16,7 +16,7 @@ export type SupportedLanguage = 'python' | 'cpp' | 'java' | 'javascript';
 
 export interface User {
   id: string;
-  cognito_sub: string;
+  cognito_sub?: string;
   email: string;
   username: string;
   role: UserRole;
@@ -118,6 +118,9 @@ export interface AuthConfig {
   mock_cognito: boolean;
   aws_region: string;
   user_pool_id: string;
+  client_id?: string;
+  cognito_domain?: string;
+  oauth_url?: string;
 }
 
 export interface AuthResponse {

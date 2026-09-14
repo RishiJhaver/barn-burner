@@ -25,7 +25,7 @@ class UserSyncRequest(BaseModel):
 
 class UserResponse(UserBase):
     id: UUID
-    cognito_sub: str
+    cognito_sub: str | None = Field(default=None, exclude=True)
     role: UserRole
     created_at: datetime
     updated_at: datetime
