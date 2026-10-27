@@ -93,8 +93,13 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
             resolved_outputs: List[str] = []
             testcase_meta: List[Dict[str, Any]] = []
             method_name: Optional[str] = None
+            is_custom_run = bool(submission.custom_input and submission.custom_input.strip())
 
-            if bundle and "test_cases" in bundle and bundle["test_cases"]:
+            if is_custom_run:
+                resolved_inputs = [submission.custom_input.strip()]
+                resolved_outputs = [""]
+                testcase_meta = [{"id": 1, "is_sample": True}]
+            elif bundle and "test_cases" in bundle and bundle["test_cases"]:
                 method_name = bundle.get("method_name")
                 raw_cases = bundle["test_cases"]
                 if submission.kind == SubmissionKind.RUN:
@@ -126,6 +131,10 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
                     submission.status = SubmissionStatus.ACCEPTED
                     submission.runtime_ms = 10
                     submission.memory_kb = 12000
+                    submission.passed_test_cases = 0
+                    submission.total_test_cases = 0
+                    submission.sample_results = []
+                    submission.first_failed_case = None
                     await db.commit()
                     return {"status": "accepted", "test_cases": 0}
 
@@ -230,6 +239,10 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
             else:
                 # Parse batched outputs against each testcase
                 parsed = harness_service.parse_outputs(stdout, resolved_outputs)
+                if is_custom_run:
+                    for p in parsed:
+                        if not p["actual"].startswith("Error:"):
+                            p["passed"] = True
                 passed_count = sum(1 for p in parsed if p["passed"])
                 all_passed = (passed_count == len(resolved_inputs))
 
@@ -286,6 +299,10 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
             submission.runtime_ms = max_runtime_ms
             submission.memory_kb = max_memory_kb
             submission.error_message = error_message
+            submission.passed_test_cases = passed_count
+            submission.total_test_cases = len(resolved_inputs)
+            submission.sample_results = sample_results
+            submission.first_failed_case = first_failed_case
 
             # 7. Update UserProblemStatus if official submit
             if submission.kind == SubmissionKind.SUBMIT:

@@ -1,5 +1,6 @@
 """Code execution, run, and submission API endpoints with non-blocking 202 responses."""
 
+import logging
 import uuid
 from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
@@ -26,20 +27,27 @@ from app.services.cache_service import CacheService
 from app.worker.tasks import _evaluate_submission_async, evaluate_submission_task
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 execution_rate_limiter = RateLimiter(action="code_execution")
 
 
 def _dispatch_task(submission_id: uuid.UUID, background_tasks: BackgroundTasks) -> None:
     """
-    Dispatch non-blocking execution task via FastAPI BackgroundTasks (guaranteeing execution
-    both in automated tests and standalone environments), and publish to Celery for distributed workers.
+    Dispatch non-blocking execution task.
+    Prefers distributed Celery workers; falls back cleanly to FastAPI BackgroundTasks
+    when Celery broker is unavailable, avoiding duplicate execution race conditions.
     """
     sub_id_str = str(submission_id)
-    background_tasks.add_task(_evaluate_submission_async, sub_id_str)
+    celery_dispatched = False
     try:
-        evaluate_submission_task.delay(sub_id_str)
-    except Exception:
-        pass
+        task_res = evaluate_submission_task.delay(sub_id_str)
+        if task_res and task_res.id:
+            celery_dispatched = True
+    except Exception as exc:
+        logger.debug("Celery broker unavailable (%s); using FastAPI BackgroundTasks", exc)
+
+    if not celery_dispatched:
+        background_tasks.add_task(_evaluate_submission_async, sub_id_str)
 
 
 @router.post(
@@ -78,6 +86,7 @@ async def run_code(
         problem_id=problem.id,
         language=request.language.value,
         code=request.code,
+        custom_input=request.custom_input,
         kind=SubmissionKind.RUN,
         status=SubmissionStatus.PENDING,
     )
@@ -397,6 +406,10 @@ async def get_submission(
         runtime_ms=submission.runtime_ms,
         memory_kb=submission.memory_kb,
         error_message=submission.error_message,
+        passed_test_cases=submission.passed_test_cases,
+        total_test_cases=submission.total_test_cases,
+        sample_results=submission.sample_results,
+        first_failed_case=submission.first_failed_case,
         created_at=submission.created_at,
         updated_at=submission.updated_at,
     )

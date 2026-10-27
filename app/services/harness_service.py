@@ -321,7 +321,7 @@ int main() {{
     while (getline(cin, line)) {{
         if (line.empty() || line == "{TESTCASE_DELIMITER}") continue;
 {call_generation}
-        cout << "\\n{OUTPUT_DELIMITER}\\n";
+        cout << "\\n{OUTPUT_DELIMITER}\\n" << flush;
     }}
     return 0;
 }}
@@ -599,6 +599,7 @@ public class Main {{
 {readers_block}
 {exec_call}
             System.out.println("\\n{OUTPUT_DELIMITER}");
+            System.out.flush();
         }}
     }}
 
@@ -813,9 +814,20 @@ _runHarness();
         results = []
         for idx, expected in enumerate(expected_outputs):
             exp_clean = expected.strip() if expected else ""
-            act_clean = actual_chunks[idx] if idx < len(actual_chunks) else ""
+            act_chunk = actual_chunks[idx] if idx < len(actual_chunks) else ""
 
-            passed = HarnessService._outputs_match(act_clean, exp_clean)
+            passed = HarnessService._outputs_match(act_chunk, exp_clean)
+            act_clean = act_chunk
+
+            # If direct match fails and chunk has multiple lines (e.g. user printed debug lines before returning),
+            # check if the final line matches the expected output
+            if not passed and "\n" in act_chunk:
+                lines = [l.strip() for l in act_chunk.splitlines() if l.strip()]
+                if lines:
+                    last_line = lines[-1]
+                    if HarnessService._outputs_match(last_line, exp_clean):
+                        passed = True
+                        act_clean = last_line
 
             results.append({
                 "index": idx + 1,

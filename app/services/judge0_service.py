@@ -33,9 +33,9 @@ JUDGE0_STATUS_MAP: Dict[int, SubmissionStatus] = {
     9: SubmissionStatus.RUNTIME_ERROR,          # Runtime Error (SIGFPE)
     10: SubmissionStatus.RUNTIME_ERROR,         # Runtime Error (SIGABRT)
     11: SubmissionStatus.RUNTIME_ERROR,         # Runtime Error (NZEC)
-    12: SubmissionStatus.RUNTIME_ERROR,         # Runtime Error (Other)
+    12: SubmissionStatus.RUNTIME_ERROR,         # Runtime Error (Other / OOM)
     13: SubmissionStatus.INTERNAL_ERROR,        # Internal Error
-    14: SubmissionStatus.MEMORY_LIMIT_EXCEEDED,  # Exec Format Error / Out of memory
+    14: SubmissionStatus.RUNTIME_ERROR,         # Exec Format Error
 }
 
 
@@ -455,6 +455,39 @@ class Judge0Service:
             "compile_output": f"Language '{language}' requires live Judge0 execution environment.",
         }
 
+    def _get_headers(self) -> Dict[str, str]:
+        """Generate authentication headers for Judge0 if configured."""
+        headers = {"Content-Type": "application/json"}
+        if settings.JUDGE0_API_KEY:
+            headers["X-RapidAPI-Key"] = settings.JUDGE0_API_KEY
+            headers["X-Auth-Token"] = settings.JUDGE0_API_KEY
+        if settings.JUDGE0_AUTH_TOKEN:
+            headers["X-Auth-Token"] = settings.JUDGE0_AUTH_TOKEN
+        if settings.JUDGE0_AUTH_USER:
+            headers["X-Auth-User"] = settings.JUDGE0_AUTH_USER
+        return headers
+
+    @staticmethod
+    def _encode_b64(text: Optional[str]) -> Optional[str]:
+        if text is None:
+            return None
+        import base64
+        return base64.b64encode(text.encode("utf-8")).decode("utf-8")
+
+    @staticmethod
+    def _decode_b64(text: Optional[str]) -> str:
+        if not text:
+            return ""
+        import base64
+        try:
+            clean = text.strip()
+            padding_needed = (4 - len(clean) % 4) % 4
+            if padding_needed:
+                clean += "=" * padding_needed
+            return base64.b64decode(clean).decode("utf-8", errors="replace")
+        except Exception:
+            return text
+
     async def _live_judge0_evaluate(
         self,
         source_code: str,
@@ -462,26 +495,30 @@ class Judge0Service:
         stdin: str,
         expected_output: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Execute against live Docker Judge0 REST API."""
+        """Execute against live Docker Judge0 REST API (Dedicated Linux VM / Option C)."""
+        import asyncio
         language_id = self.get_language_id(language)
         payload: Dict[str, Any] = {
-            "source_code": source_code,
+            "source_code": self._encode_b64(source_code),
             "language_id": language_id,
-            "stdin": stdin,
+            "stdin": self._encode_b64(stdin),
             "cpu_time_limit": settings.JUDGE0_CPU_TIME_LIMIT,
             "memory_limit": settings.JUDGE0_MEMORY_LIMIT,
         }
         if expected_output:
-            payload["expected_output"] = expected_output
+            payload["expected_output"] = self._encode_b64(expected_output)
 
-        url = f"{self.base_url}/submissions?base64_encoded=false&wait=true"
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        headers = self._get_headers()
+        url = f"{self.base_url}/submissions?base64_encoded=true&wait=true"
+        timeout_budget = max(15.0, settings.JUDGE0_POLL_TIMEOUT_SECONDS + 5.0)
+
+        async with httpx.AsyncClient(timeout=timeout_budget) as client:
             try:
-                response = await client.post(url, json=payload)
+                response = await client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
             except Exception as exc:
-                logger.error("Failed to execute on Judge0: %s", exc)
+                logger.error("Failed to execute on Judge0 at %s: %s", url, exc)
                 return {
                     "status": SubmissionStatus.INTERNAL_ERROR,
                     "runtime_ms": 0,
@@ -491,17 +528,48 @@ class Judge0Service:
                     "compile_output": None,
                 }
 
-        # Parse response
-        status_id = data.get("status", {}).get("id", 13)
-        normalized_status = JUDGE0_STATUS_MAP.get(status_id, SubmissionStatus.INTERNAL_ERROR)
+            # If Judge0 returned non-terminal status (1 = In Queue, 2 = Processing), poll for result
+            token = data.get("token")
+            status_id = data.get("status", {}).get("id", 13)
+
+            if status_id in (1, 2) and token:
+                poll_url = f"{self.base_url}/submissions/{token}?base64_encoded=true"
+                start_time = asyncio.get_event_loop().time()
+                poll_delay = 0.25
+
+                while (asyncio.get_event_loop().time() - start_time) < settings.JUDGE0_POLL_TIMEOUT_SECONDS:
+                    await asyncio.sleep(poll_delay)
+                    poll_delay = min(1.0, poll_delay * 1.4)
+                    try:
+                        poll_resp = await client.get(poll_url, headers=headers)
+                        if poll_resp.status_code == 200:
+                            poll_data = poll_resp.json()
+                            status_id = poll_data.get("status", {}).get("id", 1)
+                            data = poll_data
+                            if status_id not in (1, 2):
+                                break
+                    except Exception as poll_exc:
+                        logger.warning("Judge0 polling warning for token %s: %s", token, poll_exc)
+
+        # Parse normalized response
+        exit_signal = data.get("exit_signal")
+        # In Judge0, sandbox OOM killing manifests as status 12 with SIGKILL (signal 9)
+        if status_id == 12 and exit_signal == 9:
+            normalized_status = SubmissionStatus.MEMORY_LIMIT_EXCEEDED
+        else:
+            normalized_status = JUDGE0_STATUS_MAP.get(status_id, SubmissionStatus.INTERNAL_ERROR)
 
         time_val = data.get("time")
         runtime_ms = int(float(time_val) * 1000) if time_val else 0
         memory_kb = int(data.get("memory") or 0)
 
-        stdout = data.get("stdout") or ""
-        stderr = data.get("stderr") or ""
-        compile_output = data.get("compile_output")
+        stdout = self._decode_b64(data.get("stdout"))
+        stderr = self._decode_b64(data.get("stderr"))
+        compile_output = self._decode_b64(data.get("compile_output"))
+        message = self._decode_b64(data.get("message"))
+
+        if message and not stderr:
+            stderr = message
 
         return {
             "status": normalized_status,
@@ -509,7 +577,7 @@ class Judge0Service:
             "memory_kb": memory_kb,
             "stdout": stdout,
             "stderr": stderr,
-            "compile_output": compile_output,
+            "compile_output": compile_output or (stderr if normalized_status == SubmissionStatus.COMPILATION_ERROR else None),
         }
 
 

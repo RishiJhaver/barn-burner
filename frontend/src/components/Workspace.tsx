@@ -71,6 +71,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
   const [consoleOpen, setConsoleOpen] = useState<boolean>(true);
   const [consoleTab, setConsoleTab] = useState<'testcases' | 'output'>('testcases');
   const [selectedTestCaseIdx, setSelectedTestCaseIdx] = useState<number>(0);
+  const [useCustomInput, setUseCustomInput] = useState<boolean>(false);
+  const [customInput, setCustomInput] = useState<string>('');
 
   // Fetch full problem details (description, templates, and sample test cases)
   useEffect(() => {
@@ -210,13 +212,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
     }
   }, [activeTab, problem.slug]);
 
-  // Handle RUN CODE (Fast evaluation on sample test cases)
+  // Handle RUN CODE (Fast evaluation on sample or custom test cases)
   const handleRunCode = async () => {
     setIsRunning(true);
     setConsoleTab('output');
     setConsoleOpen(true);
     try {
-      const resp = await submissionsApi.runCode(problem.slug, language, code);
+      const resp = await submissionsApi.runCode(
+        problem.slug,
+        language,
+        code,
+        useCustomInput ? customInput : undefined
+      );
       const subId = resp.submission_id;
 
       // Poll until finished
@@ -232,6 +239,19 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
           } else if (attempts > 30) {
             clearInterval(interval);
             setIsRunning(false);
+            setRunResult({
+              id: subId,
+              user_id: '',
+              problem_id: currentProblem.id,
+              language,
+              kind: 'run',
+              status: 'internal_error',
+              runtime_ms: 0,
+              memory_kb: 0,
+              error_message: 'Execution timed out waiting for sandbox result. Please verify Judge0 is running and reachable.',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
           }
         } catch (e) {
           clearInterval(interval);
@@ -264,6 +284,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
           } else if (attempts > 40) {
             clearInterval(interval);
             setIsSubmitting(false);
+            alert('Submission evaluation timed out waiting for Judge0 response. Please check Submissions History.');
           }
         } catch (e) {
           clearInterval(interval);
@@ -586,33 +607,61 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
               >
                 {consoleTab === 'testcases' ? (
                   <div className="space-y-3">
-                    {currentProblem.sample_test_cases && currentProblem.sample_test_cases.length > 0 ? (
-                      <div>
-                        <div className="flex gap-2 mb-2">
-                          {currentProblem.sample_test_cases.map((_, i) => (
-                            <button
-                              key={i}
-                              onClick={() => setSelectedTestCaseIdx(i)}
-                              className={`px-3 py-1 rounded-xl text-xs font-semibold transition-all ${
-                                selectedTestCaseIdx === i
-                                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
-                                  : 'bg-black/[0.03] dark:bg-white/[0.05] text-slate-600 dark:text-slate-400 hover:bg-black/[0.06] dark:hover:bg-white/[0.08]'
-                              }`}
-                            >
-                              Case {i + 1}
-                            </button>
-                          ))}
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      {currentProblem.sample_test_cases?.map((_, i) => (
+                        <button
+                          key={i}
+                          onClick={() => {
+                            setUseCustomInput(false);
+                            setSelectedTestCaseIdx(i);
+                          }}
+                          className={`px-3 py-1 rounded-xl text-xs font-semibold transition-all ${
+                            !useCustomInput && selectedTestCaseIdx === i
+                              ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
+                              : 'bg-black/[0.03] dark:bg-white/[0.05] text-slate-600 dark:text-slate-400 hover:bg-black/[0.06] dark:hover:bg-white/[0.08]'
+                          }`}
+                        >
+                          Case {i + 1}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setUseCustomInput(true)}
+                        className={`px-3 py-1 rounded-xl text-xs font-semibold transition-all ${
+                          useCustomInput
+                            ? 'bg-blue-600 text-white shadow-sm'
+                            : 'bg-black/[0.03] dark:bg-white/[0.05] text-blue-600 dark:text-blue-400 hover:bg-blue-500/10'
+                        }`}
+                      >
+                        + Custom Input
+                      </button>
+                    </div>
+
+                    {useCustomInput ? (
+                      <div className="space-y-2 rounded-2xl bg-white/70 dark:bg-slate-900/60 p-3.5 border border-blue-500/30">
+                        <div className="flex items-center justify-between">
+                          <p className="text-blue-600 dark:text-blue-400 text-[10px] uppercase font-sans font-semibold">
+                            Custom Test Input:
+                          </p>
+                          <span className="text-[10px] text-slate-400">Lines match function arguments</span>
                         </div>
-                        <div className="space-y-2 rounded-2xl bg-white/70 dark:bg-slate-900/60 p-3.5 border border-black/10 dark:border-white/10">
-                          <p className="text-slate-400 text-[10px] uppercase font-sans font-semibold">Input:</p>
-                          <pre className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap font-mono">
-                            {currentProblem.sample_test_cases[selectedTestCaseIdx]?.input}
-                          </pre>
-                          <p className="text-slate-400 text-[10px] uppercase font-sans font-semibold pt-1">Expected Output:</p>
-                          <pre className="text-emerald-600 dark:text-emerald-400 font-semibold whitespace-pre-wrap font-mono">
-                            {currentProblem.sample_test_cases[selectedTestCaseIdx]?.expected_output}
-                          </pre>
-                        </div>
+                        <textarea
+                          value={customInput}
+                          onChange={(e) => setCustomInput(e.target.value)}
+                          placeholder="e.g. [1, 2, 3] or enter inputs line by line"
+                          rows={4}
+                          className="w-full bg-black/[0.03] dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl p-2.5 font-mono text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-blue-500 transition-colors"
+                        />
+                      </div>
+                    ) : currentProblem.sample_test_cases && currentProblem.sample_test_cases.length > 0 ? (
+                      <div className="space-y-2 rounded-2xl bg-white/70 dark:bg-slate-900/60 p-3.5 border border-black/10 dark:border-white/10">
+                        <p className="text-slate-400 text-[10px] uppercase font-sans font-semibold">Input:</p>
+                        <pre className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap font-mono">
+                          {currentProblem.sample_test_cases[selectedTestCaseIdx]?.input}
+                        </pre>
+                        <p className="text-slate-400 text-[10px] uppercase font-sans font-semibold pt-1">Expected Output:</p>
+                        <pre className="text-emerald-600 dark:text-emerald-400 font-semibold whitespace-pre-wrap font-mono">
+                          {currentProblem.sample_test_cases[selectedTestCaseIdx]?.expected_output}
+                        </pre>
                       </div>
                     ) : (
                       <p className="text-slate-400">No sample test cases configured.</p>

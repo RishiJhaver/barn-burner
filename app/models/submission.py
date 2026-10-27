@@ -1,7 +1,7 @@
 import uuid
-from typing import TYPE_CHECKING, Optional
-from sqlalchemy import String, Text, Integer, Enum, ForeignKey, Index
-from sqlalchemy.dialects.postgresql import UUID
+from typing import TYPE_CHECKING, Any, Optional
+from sqlalchemy import String, Text, Integer, Enum, ForeignKey, Index, JSON
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin
 from app.models.enums import SubmissionKind, SubmissionStatus
@@ -32,6 +32,7 @@ class Submission(Base, TimestampMixin):
     )
     language: Mapped[str] = mapped_column(String(32), nullable=False)
     code: Mapped[str] = mapped_column(Text, nullable=False)
+    custom_input: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     kind: Mapped[SubmissionKind] = mapped_column(
         Enum(
             SubmissionKind,
@@ -55,6 +56,10 @@ class Submission(Base, TimestampMixin):
     runtime_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     memory_kb: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    passed_test_cases: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    total_test_cases: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    sample_results: Mapped[Optional[Any]] = mapped_column(JSONB().with_variant(JSON(), "sqlite"), nullable=True)
+    first_failed_case: Mapped[Optional[Any]] = mapped_column(JSONB().with_variant(JSON(), "sqlite"), nullable=True)
     judge0_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # Relationships

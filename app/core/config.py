@@ -39,12 +39,16 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
 
-    # Judge0 Configuration
+    # Judge0 Configuration (Option C: Dedicated Linux VM / Remote Instance)
     MOCK_JUDGE0: bool = True
     JUDGE0_URL: str = "http://localhost:2358"
-    JUDGE0_CALLBACK_URL: str = "http://localhost:8000/internal/judge0-callback"
+    JUDGE0_CALLBACK_URL: str = "http://localhost:8000/api/v1/internal/judge0-callback"
+    JUDGE0_API_KEY: str = ""
+    JUDGE0_AUTH_TOKEN: str = ""
+    JUDGE0_AUTH_USER: str = ""
     JUDGE0_CPU_TIME_LIMIT: float = 2.0
     JUDGE0_MEMORY_LIMIT: int = 128000
+    JUDGE0_POLL_TIMEOUT_SECONDS: float = 15.0
     MAX_CODE_LENGTH_BYTES: int = 65536
 
     # Rate Limiting (Anti-Spam Short Window; No Daily Limit)

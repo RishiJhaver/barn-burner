@@ -373,3 +373,88 @@ def test_s3_bundle_storage_with_unicode_and_special_chars():
     assert retrieved["method_name"] == "specialCharSolve"
     assert "🚀" in retrieved["test_cases"][0]["input"]
     assert "🎯" in retrieved["test_cases"][0]["expected_output"]
+
+
+# ==========================================
+# 7. JUDGE0 BASE64 & LIVE CLIENT UNIT TESTS
+# ==========================================
+
+def test_judge0_base64_encoding_and_decoding():
+    """Verify base64 helpers handle unicode, newlines, empty strings, and special characters cleanly."""
+    raw = "def solve():\n    return '🚀 Hello World! <>&\"'\n"
+    encoded = judge0_service._encode_b64(raw)
+    assert encoded is not None
+    assert isinstance(encoded, str)
+    decoded = judge0_service._decode_b64(encoded)
+    assert decoded == raw
+
+    # None and empty handling
+    assert judge0_service._encode_b64(None) is None
+    assert judge0_service._decode_b64(None) == ""
+    assert judge0_service._decode_b64("") == ""
+
+
+def test_judge0_auth_headers_generation(monkeypatch):
+    """Verify Judge0 service adds authentication headers when API key or auth token is configured."""
+    from app.core.config import get_settings
+    current_settings = get_settings()
+
+    monkeypatch.setattr(current_settings, "JUDGE0_API_KEY", "rapidapi-secret-key-123")
+    monkeypatch.setattr(current_settings, "JUDGE0_AUTH_TOKEN", "judge0-token-456")
+    monkeypatch.setattr(current_settings, "JUDGE0_AUTH_USER", "judge0-user")
+
+    headers = judge0_service._get_headers()
+    assert headers["X-RapidAPI-Key"] == "rapidapi-secret-key-123"
+    assert headers["X-Auth-Token"] == "judge0-token-456"
+    assert headers["X-Auth-User"] == "judge0-user"
+
+
+@pytest.mark.asyncio
+async def test_judge0_live_polling_mock(monkeypatch):
+    """Verify _live_judge0_evaluate polls when Judge0 returns non-terminal status 1 (In Queue)."""
+    import base64
+    from httpx import Response, Request
+
+    calls = 0
+
+    async def mock_post(client_self, url, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return Response(
+            201,
+            json={"token": "mock-token-xyz", "status": {"id": 1, "description": "In Queue"}},
+            request=Request("POST", url),
+        )
+
+    async def mock_get(client_self, url, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        stdout_b64 = base64.b64encode(b"42\n").decode("utf-8")
+        return Response(
+            200,
+            json={
+                "token": "mock-token-xyz",
+                "status": {"id": 3, "description": "Accepted"},
+                "stdout": stdout_b64,
+                "time": "0.05",
+                "memory": 12400,
+            },
+            request=Request("GET", url),
+        )
+
+    import httpx
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+
+    res = await judge0_service._live_judge0_evaluate(
+        source_code="print(42)",
+        language="python",
+        stdin="",
+        expected_output="42",
+    )
+
+    assert calls >= 2  # initial POST + at least 1 GET poll
+    assert res["status"] == SubmissionStatus.ACCEPTED
+    assert res["stdout"].strip() == "42"
+    assert res["runtime_ms"] == 50
+
