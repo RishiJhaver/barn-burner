@@ -146,17 +146,19 @@ async def list_problems(
     limit: int = Query(20, ge=1, le=100, description="Page size limit"),
     difficulty: Optional[ProblemDifficulty] = Query(None, description="Filter by difficulty"),
     tag: Optional[str] = Query(None, description="Filter by tag name or slug"),
+    tag_slug: Optional[str] = Query(None, description="Filter by tag slug (alias for tag)"),
     db: AsyncSession = Depends(get_db),
 ) -> List[ProblemListItemResponse]:
     """
     List published problems using keyset pagination on (created_at DESC, id DESC).
     Results are cached in Redis.
     """
+    filter_tag = tag or tag_slug
     cache_key = CacheService.problem_list_key(
         last_id=last_id,
         limit=limit,
         difficulty=difficulty.value if difficulty else None,
-        tag=tag,
+        tag=filter_tag,
     )
 
     cached_data = await CacheService.get_json(cache_key)
@@ -173,8 +175,8 @@ async def list_problems(
     if difficulty:
         query = query.where(Problem.difficulty == difficulty)
 
-    if tag:
-        query = query.join(Problem.tags).where((Tag.slug == tag) | (Tag.name == tag))
+    if filter_tag:
+        query = query.join(Problem.tags).where((Tag.slug == filter_tag) | (Tag.name.ilike(filter_tag)))
 
     if last_id:
         subq = select(Problem.created_at).where(Problem.id == last_id).scalar_subquery()
@@ -193,8 +195,8 @@ async def list_problems(
         response_items = _get_fallback_problems()
         if difficulty:
             response_items = [p for p in response_items if p.difficulty == difficulty]
-        if tag:
-            response_items = [p for p in response_items if any(t.slug == tag or t.name == tag for t in p.tags)]
+        if filter_tag:
+            response_items = [p for p in response_items if any(t.slug == filter_tag or t.name.lower() == filter_tag.lower() for t in p.tags)]
 
     # Cache the serialized result in Redis
     await CacheService.set_json(

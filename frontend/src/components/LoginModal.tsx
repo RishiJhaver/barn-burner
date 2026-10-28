@@ -113,8 +113,14 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
       setErrorMessage('Please fill in all required fields.');
       return;
     }
-    if (password.length < 6) {
-      setErrorMessage('Password must be at least 6 characters long.');
+    if (password.length < 8) {
+      setErrorMessage('Password must be at least 8 characters long.');
+      return;
+    }
+    const hasNumber = /\d/.test(password);
+    const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+    if (!hasNumber || !hasSpecial) {
+      setErrorMessage('Password must include at least 1 number and 1 special symbol (e.g. !@#$).');
       return;
     }
     if (password !== confirmPassword) {
@@ -203,8 +209,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
       setErrorMessage('Please enter both verification code and new password.');
       return;
     }
-    if (newPassword.length < 6) {
-      setErrorMessage('New password must be at least 6 characters.');
+    if (newPassword.length < 8) {
+      setErrorMessage('New password must be at least 8 characters long.');
+      return;
+    }
+    if (!/\d/.test(newPassword) || !/[!@#$%^&*(),.?":{}|<>]/.test(newPassword)) {
+      setErrorMessage('New password must include at least 1 number and 1 special symbol (e.g. !@#$).');
       return;
     }
     setErrorMessage(null);
@@ -513,10 +523,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
                 </label>
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="Min 6 chars"
+                  placeholder="Min 8 chars, 1 num, 1 sym"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded-xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-white/[0.04] px-3 py-2.5 text-slate-900 dark:text-white placeholder-slate-400 focus:border-slate-900 dark:focus:border-white focus:outline-none transition-all shadow-sm"
+                  className="w-full rounded-xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-white/[0.04] px-3 py-2.5 text-slate-900 dark:text-white placeholder-slate-400 focus:border-slate-900 dark:focus:border-white focus:outline-none transition-all shadow-sm text-xs"
                   required
                 />
               </div>
@@ -527,14 +537,18 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
                 </label>
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="Repeat pwd"
+                  placeholder="Repeat password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full rounded-xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-white/[0.04] px-3 py-2.5 text-slate-900 dark:text-white placeholder-slate-400 focus:border-slate-900 dark:focus:border-white focus:outline-none transition-all shadow-sm"
+                  className="w-full rounded-xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-white/[0.04] px-3 py-2.5 text-slate-900 dark:text-white placeholder-slate-400 focus:border-slate-900 dark:focus:border-white focus:outline-none transition-all shadow-sm text-xs"
                   required
                 />
               </div>
             </div>
+
+            <p className="text-[10px] text-slate-400 dark:text-slate-500">
+              Must be at least 8 characters with at least 1 number and 1 symbol (e.g. <span className="font-mono text-slate-600 dark:text-slate-300">CodeGrid2026!</span>).
+            </p>
 
             {/* Role Selection */}
             <div className="pt-1">
@@ -786,10 +800,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
               </label>
               <input
                 type="password"
-                placeholder="Minimum 6 characters"
+                placeholder="Min 8 chars, 1 num, 1 sym (e.g. CodeGrid2026!)"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full rounded-xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-white/[0.04] px-3.5 py-2.5 text-slate-900 dark:text-white placeholder-slate-400 focus:border-slate-900 dark:focus:border-white focus:outline-none"
+                className="w-full rounded-xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-white/[0.04] px-3.5 py-2.5 text-slate-900 dark:text-white placeholder-slate-400 focus:border-slate-900 dark:focus:border-white focus:outline-none text-xs"
                 required
               />
             </div>

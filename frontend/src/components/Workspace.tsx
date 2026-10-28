@@ -28,6 +28,7 @@ interface WorkspaceProps {
   problem: Problem;
   onBack: () => void;
   onOpenVerdict: (submission: SubmissionDetail) => void;
+  onSelectTopic?: (topicSlug: string) => void;
 }
 
 const DEFAULT_TEMPLATES: Record<SupportedLanguage, string> = {
@@ -62,7 +63,12 @@ var solve = function(nums, target) {
 `,
 };
 
-export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVerdict }) => {
+export const Workspace: React.FC<WorkspaceProps> = ({
+  problem,
+  onBack,
+  onOpenVerdict,
+  onSelectTopic,
+}) => {
   const { isDark } = useTheme();
   const [currentProblem, setCurrentProblem] = useState<Problem>(problem);
   const [language, setLanguage] = useState<SupportedLanguage>('python');
@@ -452,12 +458,21 @@ export const Workspace: React.FC<WorkspaceProps> = ({ problem, onBack, onOpenVer
                     <p className="text-xs font-semibold text-slate-400 dark:text-slate-500 mb-2 uppercase tracking-wider">Related Topics</p>
                     <div className="flex flex-wrap gap-1.5">
                       {currentProblem.tags.map((tag) => (
-                        <span
+                        <button
                           key={tag.id}
-                          className="rounded-md border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] px-2.5 py-1 text-xs text-slate-600 dark:text-slate-400 font-medium"
+                          type="button"
+                          onClick={() => {
+                            if (onSelectTopic) {
+                              onSelectTopic(tag.slug);
+                            } else {
+                              onBack();
+                            }
+                          }}
+                          className="rounded-md border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] px-2.5 py-1 text-xs text-slate-600 dark:text-slate-400 font-medium hover:bg-slate-900 hover:text-white dark:hover:bg-white dark:hover:text-slate-900 transition-all cursor-pointer"
+                          title={`View questions related to ${tag.name}`}
                         >
                           {tag.name}
-                        </span>
+                        </button>
                       ))}
                     </div>
                   </div>

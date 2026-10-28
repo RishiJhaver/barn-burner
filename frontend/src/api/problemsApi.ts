@@ -5,10 +5,23 @@ export const problemsApi = {
   getProblems: async (params?: {
     difficulty?: string;
     tag_slug?: string;
+    tag?: string;
     limit?: number;
     cursor?: string;
   }): Promise<{ items: Problem[]; next_cursor?: string | null; has_more: boolean }> => {
-    const res = await apiClient.get('/problems', { params });
+    const cleanParams: Record<string, any> = {};
+    if (params?.difficulty && params.difficulty !== 'all') {
+      cleanParams.difficulty = params.difficulty;
+    }
+    const resolvedTag = params?.tag || params?.tag_slug;
+    if (resolvedTag && resolvedTag !== 'all') {
+      cleanParams.tag = resolvedTag;
+      cleanParams.tag_slug = resolvedTag;
+    }
+    if (params?.limit) cleanParams.limit = params.limit;
+    if (params?.cursor) cleanParams.cursor = params.cursor;
+
+    const res = await apiClient.get('/problems', { params: cleanParams });
     // Normalize response: if backend returns array directly or paginated wrapper
     if (Array.isArray(res.data)) {
       return { items: res.data, has_more: false };

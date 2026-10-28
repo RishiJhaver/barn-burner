@@ -18,16 +18,35 @@ import { problemsApi } from '../api/problemsApi';
 
 interface ProblemCatalogProps {
   onSelectProblem: (problem: Problem) => void;
+  selectedTag?: string;
+  onTagChange?: (tagSlug: string) => void;
 }
 
-export const ProblemCatalog: React.FC<ProblemCatalogProps> = ({ onSelectProblem }) => {
+export const ProblemCatalog: React.FC<ProblemCatalogProps> = ({
+  onSelectProblem,
+  selectedTag: propSelectedTag,
+  onTagChange,
+}) => {
   const [problems, setProblems] = useState<Problem[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
-  const [selectedTag, setSelectedTag] = useState<string>('all');
+  const [selectedTag, setSelectedTag] = useState<string>(propSelectedTag || 'all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeLangFilter, setActiveLangFilter] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (propSelectedTag !== undefined && propSelectedTag !== selectedTag) {
+      setSelectedTag(propSelectedTag);
+    }
+  }, [propSelectedTag]);
+
+  const handleTagChange = (newTag: string) => {
+    setSelectedTag(newTag);
+    if (onTagChange) {
+      onTagChange(newTag);
+    }
+  };
 
   useEffect(() => {
     const fetchCatalog = async () => {
@@ -36,7 +55,7 @@ export const ProblemCatalog: React.FC<ProblemCatalogProps> = ({ onSelectProblem 
         const [probRes, tagsRes] = await Promise.all([
           problemsApi.getProblems({
             difficulty: selectedDifficulty !== 'all' ? selectedDifficulty : undefined,
-            tag_slug: selectedTag !== 'all' ? selectedTag : undefined,
+            tag: selectedTag !== 'all' ? selectedTag : undefined,
           }),
           problemsApi.getTags(),
         ]);
@@ -52,11 +71,46 @@ export const ProblemCatalog: React.FC<ProblemCatalogProps> = ({ onSelectProblem 
     fetchCatalog();
   }, [selectedDifficulty, selectedTag]);
 
-  // Filter problems by search query
+  // Combine tags from API with tags present on fetched problems for complete coverage
+  const allAvailableTags: Tag[] = React.useMemo(() => {
+    const map = new Map<string, Tag>();
+    tags.forEach((t) => map.set(t.slug.toLowerCase(), t));
+    problems.forEach((p) => {
+      p.tags?.forEach((t) => {
+        if (!map.has(t.slug.toLowerCase())) {
+          map.set(t.slug.toLowerCase(), t);
+        }
+      });
+    });
+    return Array.from(map.values());
+  }, [tags, problems]);
+
+  // Filter problems by search query (title, slug, or topics), difficulty, and selected topic
   const filteredProblems = problems.filter((p) => {
-    const query = searchQuery.toLowerCase();
-    const matchesSearch = p.title.toLowerCase().includes(query) || p.slug.toLowerCase().includes(query);
-    return matchesSearch;
+    const query = searchQuery.toLowerCase().trim();
+    const matchesSearch =
+      !query ||
+      p.title.toLowerCase().includes(query) ||
+      p.slug.toLowerCase().includes(query) ||
+      p.tags?.some(
+        (t) =>
+          t.name.toLowerCase().includes(query) ||
+          t.slug.toLowerCase().includes(query)
+      );
+
+    const matchesDifficulty =
+      selectedDifficulty === 'all' ||
+      p.difficulty.toLowerCase() === selectedDifficulty.toLowerCase();
+
+    const matchesTag =
+      selectedTag === 'all' ||
+      p.tags?.some(
+        (t) =>
+          t.slug.toLowerCase() === selectedTag.toLowerCase() ||
+          t.name.toLowerCase() === selectedTag.toLowerCase()
+      );
+
+    return matchesSearch && matchesDifficulty && matchesTag;
   });
 
   const getDifficultyBadge = (diff: ProblemDifficulty) => {
@@ -260,7 +314,7 @@ export const ProblemCatalog: React.FC<ProblemCatalogProps> = ({ onSelectProblem 
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               type="text"
-              placeholder="Search problems by title, slug, or keyword..."
+              placeholder="Search problems by title, topic (e.g. Array, Hash Table)..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full rounded-2xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-[#0c0e14]/60 pl-11 pr-4 py-2.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 backdrop-blur-xl focus:border-slate-900 dark:focus:border-white focus:outline-none transition-all shadow-sm"
@@ -285,32 +339,35 @@ export const ProblemCatalog: React.FC<ProblemCatalogProps> = ({ onSelectProblem 
           </div>
         </div>
 
-        {/* Tag Pills */}
-        {tags.length > 0 && (
+        {/* Tag / Topic Pills */}
+        {allAvailableTags.length > 0 && (
           <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
             <button
-              onClick={() => setSelectedTag('all')}
-              className={`flex-shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-all ${
+              onClick={() => handleTagChange('all')}
+              className={`flex-shrink-0 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all ${
                 selectedTag === 'all'
-                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm font-semibold'
                   : 'border border-black/10 dark:border-white/10 bg-white/40 dark:bg-white/[0.02] text-slate-600 dark:text-slate-400 hover:border-black/20 dark:hover:border-white/20'
               }`}
             >
               All Topics
             </button>
-            {tags.map((tag) => (
-              <button
-                key={tag.id}
-                onClick={() => setSelectedTag(selectedTag === tag.slug ? 'all' : tag.slug)}
-                className={`flex-shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-all ${
-                  selectedTag === tag.slug
-                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                    : 'border border-black/10 dark:border-white/10 bg-white/40 dark:bg-white/[0.02] text-slate-600 dark:text-slate-400 hover:border-black/20 dark:hover:border-white/20'
-                }`}
-              >
-                {tag.name}
-              </button>
-            ))}
+            {allAvailableTags.map((tag) => {
+              const isSelected = selectedTag.toLowerCase() === tag.slug.toLowerCase() || selectedTag.toLowerCase() === tag.name.toLowerCase();
+              return (
+                <button
+                  key={tag.id}
+                  onClick={() => handleTagChange(isSelected ? 'all' : tag.slug)}
+                  className={`flex-shrink-0 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all ${
+                    isSelected
+                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm font-semibold'
+                      : 'border border-black/10 dark:border-white/10 bg-white/40 dark:bg-white/[0.02] text-slate-600 dark:text-slate-400 hover:border-black/20 dark:hover:border-white/20'
+                  }`}
+                >
+                  {tag.name}
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -325,7 +382,9 @@ export const ProblemCatalog: React.FC<ProblemCatalogProps> = ({ onSelectProblem 
             <div className="flex h-64 flex-col items-center justify-center gap-2 p-6 text-center">
               <Terminal className="h-8 w-8 text-slate-400" />
               <p className="text-base font-semibold text-slate-800 dark:text-slate-200">No problems found</p>
-              <p className="text-xs text-slate-400">Try modifying your search query or filters</p>
+              <p className="text-xs text-slate-400">
+                {selectedTag !== 'all' ? `No problems found under topic "${selectedTag}". Click "All Topics" to reset.` : 'Try modifying your search query or filters'}
+              </p>
             </div>
           ) : (
             <div className="divide-y divide-black/[0.06] dark:divide-white/[0.06]">
@@ -347,14 +406,27 @@ export const ProblemCatalog: React.FC<ProblemCatalogProps> = ({ onSelectProblem 
                         {getDifficultyBadge(problem.difficulty)}
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                        {problem.tags?.map((tag) => (
-                          <span
-                            key={tag.id}
-                            className="rounded-md px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-black/[0.03] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.06]"
-                          >
-                            {tag.name}
-                          </span>
-                        ))}
+                        {problem.tags?.map((tag) => {
+                          const isTagActive = selectedTag.toLowerCase() === tag.slug.toLowerCase() || selectedTag.toLowerCase() === tag.name.toLowerCase();
+                          return (
+                            <button
+                              key={tag.id}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleTagChange(isTagActive ? 'all' : tag.slug);
+                              }}
+                              className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-all border ${
+                                isTagActive
+                                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-transparent font-semibold shadow-sm'
+                                  : 'text-slate-500 dark:text-slate-400 bg-black/[0.03] dark:bg-white/[0.04] border-black/[0.06] dark:border-white/[0.06] hover:border-slate-400 hover:text-slate-900 dark:hover:text-white'
+                              }`}
+                              title={`Filter questions by ${tag.name}`}
+                            >
+                              {tag.name}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>

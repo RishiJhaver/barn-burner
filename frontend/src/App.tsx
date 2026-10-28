@@ -10,6 +10,7 @@ import { LoginModal } from './components/LoginModal';
 export const App: React.FC = () => {
   const [activeView, setActiveView] = useState<'catalog' | 'workspace'>('catalog');
   const [selectedProblem, setSelectedProblem] = useState<Problem | null>(null);
+  const [selectedTag, setSelectedTag] = useState<string>('all');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
   const [isStatsModalOpen, setIsStatsModalOpen] = useState<boolean>(false);
   const [verdictSubmission, setVerdictSubmission] = useState<SubmissionDetail | null>(null);
@@ -22,6 +23,12 @@ export const App: React.FC = () => {
 
   const handleBackToCatalog = () => {
     setActiveView('catalog');
+  };
+
+  const handleSelectTopicFromWorkspace = (topicSlug: string) => {
+    setSelectedTag(topicSlug);
+    setActiveView('catalog');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -44,11 +51,16 @@ export const App: React.FC = () => {
       {/* Main View Area */}
       <main className="relative z-10 flex-1">
         {activeView === 'catalog' || !selectedProblem ? (
-          <ProblemCatalog onSelectProblem={handleSelectProblem} />
+          <ProblemCatalog
+            onSelectProblem={handleSelectProblem}
+            selectedTag={selectedTag}
+            onTagChange={setSelectedTag}
+          />
         ) : (
           <Workspace
             problem={selectedProblem}
             onBack={handleBackToCatalog}
+            onSelectTopic={handleSelectTopicFromWorkspace}
             onOpenVerdict={(submission) => setVerdictSubmission(submission)}
           />
         )}
