@@ -288,7 +288,7 @@ MOCK_S3=False
 # Judge0 Execution Cluster
 MOCK_JUDGE0=False
 JUDGE0_URL=http://judge0-server:2358
-JUDGE0_CALLBACK_URL=https://api.yourdomain.com/internal/judge0-callback
+JUDGE0_CALLBACK_URL=https://api.yourdomain.com/api/v1/internal/judge0-callback
 
 # CORS Allowed Origins
 ALLOWED_ORIGINS=https://yourdomain.com,https://app.yourdomain.com

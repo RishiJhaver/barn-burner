@@ -288,11 +288,15 @@ In the AWS EC2 Console, create three Security Groups in your VPC:
    COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
    COGNITO_ISSUER=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_xxxxxxxxx
 
-   # Judge0 Private Instance Connection
+   # Judge0 Private Instance Connection (Option C)
    MOCK_JUDGE0=False
    JUDGE0_URL=http://<judge0-private-ip>:2358
+   JUDGE0_CALLBACK_URL=http://<api-elastic-ip>:8000/api/v1/internal/judge0-callback
    JUDGE0_CPU_TIME_LIMIT=2.0
    JUDGE0_MEMORY_LIMIT=128000
+   JUDGE0_POLL_TIMEOUT_SECONDS=15.0
+   JUDGE0_AUTH_TOKEN=
+   JUDGE0_API_KEY=
 
    # Security & CORS
    ALLOWED_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
