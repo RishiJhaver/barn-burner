@@ -37,7 +37,7 @@ class S3Service:
             self.local_bucket_dir = LOCAL_STORAGE_DIR / self.bucket
             self.local_bucket_dir.mkdir(parents=True, exist_ok=True)
 
-    def put_text(self, key: str, content: str) -> str:
+    def put_text(self, key: str, content: str, content_type: Optional[str] = None) -> str:
         """Upload text content to S3 or local storage."""
         if self.mock_s3:
             target_path = self.local_bucket_dir / key
@@ -45,12 +45,20 @@ class S3Service:
             target_path.write_text(content, encoding="utf-8")
             return key
 
+        if not content_type:
+            if key.endswith(".md"):
+                content_type = "text/markdown; charset=utf-8"
+            elif key.endswith(".json"):
+                content_type = "application/json; charset=utf-8"
+            else:
+                content_type = "text/plain; charset=utf-8"
+
         try:
             self.client.put_object(
                 Bucket=self.bucket,
                 Key=key,
                 Body=content.encode("utf-8"),
-                ContentType="text/plain; charset=utf-8",
+                ContentType=content_type,
             )
             return key
         except ClientError as exc:
@@ -72,14 +80,14 @@ class S3Service:
             response = self.client.get_object(Bucket=self.bucket, Key=key)
             return response["Body"].read().decode("utf-8")
         except ClientError as exc:
-            error_code = exc.response.get("Error", {}).get("Code")
-            if error_code == "NoSuchKey":
+            error_code = str(exc.response.get("Error", {}).get("Code", ""))
+            if error_code in ("NoSuchKey", "404", "NoSuchBucket"):
                 return ""
-            logger.error("Failed to read from S3 key %s: %s", key, exc)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Storage read error: {str(exc)}",
-            )
+            logger.warning("Failed to read from S3 key %s: %s", key, exc)
+            return ""
+        except Exception as exc:
+            logger.warning("Unexpected error reading S3 key %s: %s", key, exc)
+            return ""
 
     def upload_testcase(
         self, problem_id: int, tc_identifier: str, input_data: str, expected_output: str
@@ -98,11 +106,14 @@ class S3Service:
     ) -> Optional[Dict[str, Any]]:
         """Fetch consolidated testcase bundle JSON from S3 if available."""
         import json
-        candidates = [f"testcases/{problem_id}/bundle.json"]
-        if slug:
-            candidates.append(f"testcases/{slug}/bundle.json")
+        candidates = [
+            f"problems/{slug}/testcases/bundle.json" if slug else None,
+            f"problems/{slug}/bundle.json" if slug else None,
+            f"testcases/{slug}/bundle.json" if slug else None,
+            f"testcases/{problem_id}/bundle.json",
+        ]
 
-        for key in candidates:
+        for key in [c for c in candidates if c]:
             content = self.get_text(key)
             if content and content.strip():
                 try:
@@ -118,9 +129,51 @@ class S3Service:
     ) -> str:
         """Store consolidated testcase bundle JSON into S3."""
         import json
-        key = f"testcases/{slug if slug else problem_id}/bundle.json"
+        key = f"problems/{slug}/testcases/bundle.json" if slug else f"testcases/{problem_id}/bundle.json"
         self.put_text(key, json.dumps(bundle_data, indent=2))
         return key
+
+    def get_problem_description(self, slug: str) -> Optional[str]:
+        """Fetch problem description markdown file from S3."""
+        candidates = [
+            f"problems/{slug}/description.md",
+            f"problems/{slug}/problem.md",
+            f"problems/{slug}/README.md",
+        ]
+        for key in candidates:
+            content = self.get_text(key)
+            if content and content.strip():
+                return content.strip()
+        return None
+
+    def put_problem_description(self, slug: str, markdown_content: str) -> str:
+        """Store problem description markdown file into S3."""
+        key = f"problems/{slug}/description.md"
+        self.put_text(key, markdown_content, content_type="text/markdown; charset=utf-8")
+        return key
+
+    def list_problems(self) -> list[str]:
+        """List slugs of problems stored under problems/ prefix in S3."""
+        if self.mock_s3:
+            problems_dir = self.local_bucket_dir / "problems"
+            if not problems_dir.exists():
+                return []
+            return [d.name for d in problems_dir.iterdir() if d.is_dir()]
+
+        try:
+            paginator = self.client.get_paginator("list_objects_v2")
+            result = paginator.paginate(Bucket=self.bucket, Prefix="problems/", Delimiter="/")
+            slugs = []
+            for page in result:
+                for prefix_info in page.get("CommonPrefixes", []):
+                    prefix = prefix_info.get("Prefix", "")
+                    slug = prefix.replace("problems/", "").strip("/")
+                    if slug:
+                        slugs.append(slug)
+            return slugs
+        except Exception as exc:
+            logger.warning("Failed to list problems from S3: %s", exc)
+            return []
 
     def generate_avatar_presigned_url(
         self, user_id: str, content_type: str = "image/webp", expires_in: int = 3600
@@ -198,6 +251,15 @@ class S3Service:
         import asyncio
         return await asyncio.to_thread(self.put_problem_testcase_bundle, problem_id, bundle_data, slug)
 
+    async def get_problem_description_async(self, slug: str) -> Optional[str]:
+        import asyncio
+        return await asyncio.to_thread(self.get_problem_description, slug)
+
+    async def put_problem_description_async(self, slug: str, markdown_content: str) -> str:
+        import asyncio
+        return await asyncio.to_thread(self.put_problem_description, slug, markdown_content)
+
 
 # Singleton instance
 s3_service = S3Service()
+

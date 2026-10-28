@@ -60,11 +60,19 @@ async def _build_problem_detail_response(
             )
         )
 
+    # Dynamically resolve problem description from S3 (problems/{slug}/description.md) if available
+    s3_desc = None
+    try:
+        s3_desc = await s3_service.get_problem_description_async(problem.slug)
+    except Exception:
+        pass
+    desc = s3_desc if s3_desc else problem.description
+
     return ProblemDetailResponse(
         id=problem.id,
         slug=problem.slug,
         title=problem.title,
-        description=problem.description,
+        description=desc,
         difficulty=problem.difficulty,
         published=problem.published,
         created_at=problem.created_at,
@@ -124,11 +132,18 @@ def _get_fallback_problem_detail(slug: str) -> Optional[ProblemDetailResponse]:
                 )
                 for tc_idx, tc in enumerate([tc for tc in data.get("test_cases", []) if tc.get("is_sample")], 1)
             ]
+            # Check S3 for markdown description override
+            s3_desc = None
+            try:
+                s3_desc = s3_service.get_problem_description(data["slug"])
+            except Exception:
+                pass
+            desc = s3_desc if s3_desc else data["description"]
             return ProblemDetailResponse(
                 id=idx,
                 slug=data["slug"],
                 title=data["title"],
-                description=data["description"],
+                description=desc,
                 difficulty=data["difficulty"],
                 published=data["published"],
                 created_at=now,
