@@ -1,10 +1,14 @@
 """Problems management and querying endpoints."""
 
 from typing import List, Optional
+import json
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.api.deps import get_db, require_admin
 from app.core.config import get_settings
@@ -155,6 +159,161 @@ def _get_fallback_problem_detail(slug: str) -> Optional[ProblemDetailResponse]:
     return None
 
 
+async def _auto_import_single_problem_from_s3(
+    slug: str, db: AsyncSession
+) -> Optional[Problem]:
+    """Check S3 for problems/{slug}/ and automatically create/update the Problem in PostgreSQL."""
+    try:
+        desc = await s3_service.get_problem_description_async(slug)
+        if not desc:
+            return None
+
+        # Fetch metadata if available
+        meta_raw = await s3_service.get_text_async(f"problems/{slug}/metadata.json")
+        meta = {}
+        if meta_raw and meta_raw.strip():
+            try:
+                meta = json.loads(meta_raw)
+            except Exception:
+                pass
+
+        title = meta.get("title")
+        if not title:
+            # Extract title from markdown H1 header or titleize slug
+            lines = [l.strip() for l in desc.splitlines() if l.strip()]
+            if lines and lines[0].startswith("# "):
+                title = lines[0].replace("# ", "").strip()
+            else:
+                title = slug.replace("-", " ").title()
+
+        diff_str = str(meta.get("difficulty", "MEDIUM")).upper()
+        difficulty = getattr(ProblemDifficulty, diff_str, ProblemDifficulty.MEDIUM)
+
+        # Check if problem already exists in DB
+        stmt = select(Problem).where(Problem.slug == slug)
+        res = await db.execute(stmt)
+        existing = res.scalar_one_or_none()
+
+        if existing:
+            existing.title = title
+            existing.description = desc
+            existing.difficulty = difficulty
+            existing.published = meta.get("published", True)
+            problem_id = existing.id
+        else:
+            new_problem = Problem(
+                slug=slug,
+                title=title,
+                description=desc,
+                difficulty=difficulty,
+                published=meta.get("published", True),
+            )
+            db.add(new_problem)
+            await db.flush()
+            problem_id = new_problem.id
+
+        # Fetch templates
+        tmpl_raw = await s3_service.get_text_async(f"problems/{slug}/templates.json")
+        templates_data = []
+        if tmpl_raw and tmpl_raw.strip():
+            try:
+                templates_data = json.loads(tmpl_raw)
+            except Exception:
+                pass
+
+        if not templates_data and not existing:
+            # Generate default starter templates
+            camel_name = "".join(w.capitalize() for w in slug.split("-"))
+            camel_name = camel_name[0].lower() + camel_name[1:] if camel_name else "solve"
+            templates_data = [
+                {"language": "python", "starter_code": f"class Solution:\n    def {camel_name}(self):\n        pass\n"},
+                {"language": "cpp", "starter_code": f"class Solution {{\npublic:\n    void {camel_name}() {{\n        \n    }}\n}};\n"},
+                {"language": "java", "starter_code": f"class Solution {{\n    public void {camel_name}() {{\n        \n    }}\n}}\n"},
+                {"language": "javascript", "starter_code": f"/**\n * @return {{void}}\n */\nvar {camel_name} = function() {{\n    \n}};\n"},
+            ]
+
+        for tmpl in templates_data:
+            lang = tmpl.get("language")
+            code = tmpl.get("starter_code", "")
+            tmpl_stmt = select(ProblemTemplate).where(
+                ProblemTemplate.problem_id == problem_id,
+                ProblemTemplate.language == lang,
+            )
+            tmpl_res = await db.execute(tmpl_stmt)
+            existing_tmpl = tmpl_res.scalar_one_or_none()
+            if existing_tmpl:
+                existing_tmpl.starter_code = code
+            else:
+                db.add(ProblemTemplate(problem_id=problem_id, language=lang, starter_code=code))
+
+        # Fetch bundle testcases
+        bundle = await s3_service.get_problem_testcase_bundle_async(problem_id=problem_id, slug=slug)
+        test_cases_data = bundle.get("test_cases", []) if bundle else []
+
+        for tc in test_cases_data:
+            tc_inp = str(tc.get("input", ""))
+            tc_out = str(tc.get("expected_output") or tc.get("expected", ""))
+            tc_sample = bool(tc.get("is_sample", False))
+            tc_stmt = select(TestCase).where(
+                TestCase.problem_id == problem_id,
+                TestCase.input == tc_inp,
+            )
+            tc_res = await db.execute(tc_stmt)
+            if not tc_res.scalar_one_or_none():
+                db.add(TestCase(
+                    problem_id=problem_id,
+                    input=tc_inp,
+                    expected_output=tc_out,
+                    is_sample=tc_sample,
+                ))
+
+        await db.commit()
+
+        # Re-query problem with relations loaded
+        q = (
+            select(Problem)
+            .options(selectinload(Problem.tags), selectinload(Problem.templates))
+            .where(Problem.id == problem_id)
+        )
+        final_res = await db.execute(q)
+        return final_res.scalar_one_or_none()
+    except Exception as exc:
+        logger.warning("Error auto-importing problem '%s' from S3: %s", slug, exc)
+        return None
+
+
+async def _sync_all_problems_from_s3(db: AsyncSession) -> List[str]:
+    """Scan S3 problems/ directory and auto-import any problems not yet in PostgreSQL."""
+    try:
+        slugs = s3_service.list_problems()
+    except Exception as exc:
+        logger.warning("Failed to list problems from S3: %s", exc)
+        return []
+
+    synced_slugs = []
+    for slug in slugs:
+        stmt = select(Problem.id).where(Problem.slug == slug)
+        res = await db.execute(stmt)
+        if not res.scalar_one_or_none():
+            prob = await _auto_import_single_problem_from_s3(slug, db)
+            if prob:
+                synced_slugs.append(slug)
+
+    if synced_slugs:
+        await CacheService.invalidate_pattern("problems:list:*")
+
+    return synced_slugs
+
+
+@router.post("/sync-s3")
+async def sync_problems_from_s3_endpoint(
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Scan S3 problems/ directory and sync any newly added questions into the PostgreSQL database."""
+    synced = await _sync_all_problems_from_s3(db)
+    return {"message": "Sync completed", "newly_imported": synced, "total_new": len(synced)}
+
+
 @router.get("", response_model=List[ProblemListItemResponse])
 async def list_problems(
     last_id: Optional[int] = Query(None, description="Keyset pagination cursor (last problem ID seen)"),
@@ -204,6 +363,13 @@ async def list_problems(
     try:
         result = await db.execute(query)
         problems = result.scalars().all()
+
+        # If no problems in DB yet, auto-sync from S3
+        if not problems and not last_id and not difficulty and not filter_tag:
+            await _sync_all_problems_from_s3(db)
+            result = await db.execute(query)
+            problems = result.scalars().all()
+
         response_items = [ProblemListItemResponse.model_validate(p) for p in problems]
     except Exception:
         # Fallback to seed problems if PostgreSQL is offline
@@ -245,6 +411,10 @@ async def get_problem_by_slug(
         )
         result = await db.execute(query)
         problem = result.scalar_one_or_none()
+
+        if not problem:
+            # Check S3 for auto-import if someone added this problem directly in S3
+            problem = await _auto_import_single_problem_from_s3(slug, db)
 
         if not problem:
             fallback = _get_fallback_problem_detail(slug)
