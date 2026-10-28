@@ -171,13 +171,14 @@ async def _evaluate_submission_async(submission_id_str: str) -> Dict[str, Any]:
                 if py_m:
                     method_name = py_m.group(1)
                 else:
-                    fn_m = re.search(r'(?:var|let|const|function)\s+([a-zA-Z0-9_]+)', template.starter_code)
+                    fn_m = re.search(r'(?:var|let|const|function)\s+([a-zA-Z0-9_$]+)', template.starter_code)
                     if fn_m:
                         method_name = fn_m.group(1)
                     else:
-                        cpp_m = re.search(r'\w+\s+([a-zA-Z0-9_]+)\s*\(', template.starter_code)
-                        if cpp_m:
-                            method_name = cpp_m.group(1)
+                        # Supports C++ and Java with complex return types like vector<int>, int[], List<Integer>
+                        sig_m = re.search(r'[\w\[\]<>&*]+\s+([a-zA-Z_]\w*)\s*\(', template.starter_code)
+                        if sig_m:
+                            method_name = sig_m.group(1)
 
             executable_code = harness_service.assemble_code(
                 language=submission.language,

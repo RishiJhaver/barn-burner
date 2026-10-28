@@ -87,14 +87,14 @@ class HarnessService:
         match = None
         if method_name:
             target_pattern = re.compile(
-                r'([a-zA-Z0-9_:<>*&]+(?:\s+[a-zA-Z0-9_:<>*&]+)?)\s+(' + re.escape(method_name) + r')\s*\(([^)]*)\)\s*\{',
+                r'([a-zA-Z0-9_:<>*&]+(?:\s+[a-zA-Z0-9_:<>*&]+)?)\s+(' + re.escape(method_name) + r')\s*\(([^)]*)\)\s*(?:const\s*)?\{',
                 re.MULTILINE
             )
             match = target_pattern.search(user_code)
 
         if not match:
             method_pattern = re.compile(
-                r'([a-zA-Z0-9_:<>*&]+(?:\s+[a-zA-Z0-9_:<>*&]+)?)\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*\{',
+                r'([a-zA-Z0-9_:<>*&]+(?:\s+[a-zA-Z0-9_:<>*&]+)?)\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*(?:const\s*)?\{',
                 re.MULTILINE
             )
             match = method_pattern.search(user_code)
@@ -214,8 +214,7 @@ bool parseBool(const string& s) {{
 }}
 
 char parseChar(string s) {{
-    if (s.size() >= 2 && s.front() == '\'' && s.back() == '\'') return s[1];
-    if (s.size() >= 2 && s.front() == '"' && s.back() == '"') return s[1];
+    if (s.size() >= 2 && (s.front() == 39 || s.front() == '"') && s.front() == s.back()) return s[1];
     return s.empty() ? ' ' : s[0];
 }}
 
@@ -605,20 +604,20 @@ public class Main {{
 
     // Deserializers
     static int[] parseIntArray(String s) {{
-        s = s.replaceAll("[\\[\\]\\\\s]", "");
+        s = s.replace("[", "").replace("]", "").replace(" ", "").trim();
         if (s.isEmpty()) return new int[0];
         String[] parts = s.split(",");
         int[] res = new int[parts.length];
-        for (int i = 0; i < parts.length; i++) res[i] = Integer.parseInt(parts[i]);
+        for (int i = 0; i < parts.length; i++) res[i] = Integer.parseInt(parts[i].trim());
         return res;
     }}
 
     static long[] parseLongArray(String s) {{
-        s = s.replaceAll("[\\[\\]\\\\s]", "");
+        s = s.replace("[", "").replace("]", "").replace(" ", "").trim();
         if (s.isEmpty()) return new long[0];
         String[] parts = s.split(",");
         long[] res = new long[parts.length];
-        for (int i = 0; i < parts.length; i++) res[i] = Long.parseLong(parts[i]);
+        for (int i = 0; i < parts.length; i++) res[i] = Long.parseLong(parts[i].trim());
         return res;
     }}
 
@@ -679,10 +678,24 @@ public class Main {{
     }}
 
     static void printResult(Object obj) {{
-        if (obj instanceof int[][]) {{
+        if (obj == null) {{
+            System.out.print("null");
+        }} else if (obj instanceof int[][]) {{
             System.out.print(Arrays.deepToString((int[][]) obj).replace(" ", ""));
         }} else if (obj instanceof int[]) {{
             System.out.print(Arrays.toString((int[]) obj).replace(" ", ""));
+        }} else if (obj instanceof long[]) {{
+            System.out.print(Arrays.toString((long[]) obj).replace(" ", ""));
+        }} else if (obj instanceof String[]) {{
+            System.out.print(Arrays.toString((String[]) obj).replace(" ", ""));
+        }} else if (obj instanceof boolean[]) {{
+            System.out.print(Arrays.toString((boolean[]) obj).replace(" ", ""));
+        }} else if (obj instanceof char[]) {{
+            System.out.print(new String((char[]) obj));
+        }} else if (obj instanceof List) {{
+            System.out.print(obj.toString().replace(" ", ""));
+        }} else if (obj instanceof Boolean) {{
+            System.out.print(obj.toString().toLowerCase());
         }} else {{
             System.out.print(obj);
         }}
@@ -770,7 +783,8 @@ function _runHarness() {{
 
         try {{
             const res = solveFn.apply(context, args);
-            console.log(JSON.stringify(res));
+            const output = (res !== undefined) ? res : (args.length > 0 ? args[0] : null);
+            console.log(JSON.stringify(output));
         }} catch(err) {{
             console.log("Error: " + err.message);
         }}

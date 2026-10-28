@@ -366,3 +366,37 @@ def test_bug8_python_boolean_case_insensitivity():
     assert parse_fn("(1, 2)") == (1, 2)
 
 
+def test_cxx_java_js_harness_syntax_integrity():
+    """Verify C++ parseChar does not produce invalid empty character constant ''' and Java has valid replace calls."""
+    cpp_code = """class Solution {
+public:
+    int trap(vector<int>& height) {
+        return 0;
+    }
+};"""
+    stitched_cpp = harness_service.assemble_code("cpp", cpp_code)
+    # Must NOT have empty character literal '''
+    assert "'''" not in stitched_cpp
+    assert "s.front() == 39" in stitched_cpp
+    assert "solver.trap(arg0)" in stitched_cpp
+
+    java_code = """class Solution {
+    public int trap(int[] height) {
+        return 0;
+    }
+}"""
+    stitched_java = harness_service.assemble_code("java", java_code)
+    # Must NOT have invalid regex escape in replaceAll
+    assert "replaceAll" not in stitched_java
+    assert 's.replace("[", "")' in stitched_java
+    assert "solver.trap(arg0)" in stitched_java
+
+    js_code = """var trap = function(height) {
+    return 0;
+};"""
+    stitched_js = harness_service.assemble_code("javascript", js_code)
+    assert "const output = (res !== undefined)" in stitched_js
+    assert "solveFn.apply(context, args)" in stitched_js
+
+
+
