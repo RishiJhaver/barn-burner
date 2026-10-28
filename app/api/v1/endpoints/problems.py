@@ -64,6 +64,29 @@ async def _build_problem_detail_response(
             )
         )
 
+    # Fallback to S3 testcases.json / bundle.json if no sample test cases in database
+    if not resolved_samples:
+        try:
+            bundle = await s3_service.get_problem_testcase_bundle_async(
+                problem_id=problem.id, slug=problem.slug
+            )
+            if bundle and "test_cases" in bundle and bundle["test_cases"]:
+                raw_cases = bundle["test_cases"]
+                sample_cases = [tc for tc in raw_cases if tc.get("is_sample", False)]
+                if not sample_cases and raw_cases:
+                    sample_cases = raw_cases[:2]
+                for idx, tc in enumerate(sample_cases, 1):
+                    resolved_samples.append(
+                        SampleTestCaseResponse(
+                            id=tc.get("id", idx),
+                            input=str(tc.get("input", "")),
+                            expected_output=str(tc.get("expected_output") or tc.get("expected", "")),
+                        )
+                    )
+        except Exception as exc:
+            logger.warning("Failed to fetch sample test cases from S3 for %s: %s", problem.slug, exc)
+
+
     # Dynamically resolve problem description from S3 (problems/{slug}/description.md) if available
     s3_desc = None
     try:

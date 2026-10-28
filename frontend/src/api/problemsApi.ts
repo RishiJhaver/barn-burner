@@ -42,4 +42,10 @@ export const problemsApi = {
     const res = await apiClient.get<Tag[]>('/tags');
     return res.data;
   },
+
+  syncS3Problems: async (): Promise<{ message: string; newly_imported: string[]; total_new: number }> => {
+    const res = await apiClient.post('/problems/sync-s3');
+    return res.data;
+  },
 };
+

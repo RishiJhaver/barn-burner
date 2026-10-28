@@ -12,6 +12,7 @@ import {
   Zap,
   Globe,
   CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 import { Problem, ProblemDifficulty, Tag } from '../types';
 import { problemsApi } from '../api/problemsApi';
@@ -34,6 +35,32 @@ export const ProblemCatalog: React.FC<ProblemCatalogProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeLangFilter, setActiveLangFilter] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+
+  const handleSyncS3 = async () => {
+    setIsSyncing(true);
+    setSyncNotice(null);
+    try {
+      const res = await problemsApi.syncS3Problems();
+      if (res.total_new > 0) {
+        setSyncNotice(`Synced ${res.total_new} new question${res.total_new > 1 ? 's' : ''} from S3!`);
+      } else {
+        setSyncNotice('All S3 questions are synced!');
+      }
+      const probRes = await problemsApi.getProblems({
+        difficulty: selectedDifficulty !== 'all' ? selectedDifficulty : undefined,
+        tag: selectedTag !== 'all' ? selectedTag : undefined,
+      });
+      setProblems(probRes.items || []);
+    } catch (err) {
+      console.error('Failed to sync S3 problems:', err);
+      setSyncNotice('Sync failed. Please check backend connection.');
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setSyncNotice(null), 4000);
+    }
+  };
 
   useEffect(() => {
     if (propSelectedTag !== undefined && propSelectedTag !== selectedTag) {
@@ -321,23 +348,44 @@ export const ProblemCatalog: React.FC<ProblemCatalogProps> = ({
             />
           </div>
 
-          {/* Difficulty Segmented Filter Pills */}
-          <div className="flex items-center gap-1 rounded-2xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-[#0c0e14]/60 p-1 backdrop-blur-xl">
-            {['all', 'easy', 'medium', 'hard'].map((diff) => (
-              <button
-                key={diff}
-                onClick={() => setSelectedDifficulty(diff)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-medium uppercase tracking-wider transition-all ${
-                  selectedDifficulty === diff
-                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm font-semibold'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                {diff}
-              </button>
-            ))}
+          <div className="flex items-center gap-3">
+            {/* Difficulty Segmented Filter Pills */}
+            <div className="flex items-center gap-1 rounded-2xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-[#0c0e14]/60 p-1 backdrop-blur-xl">
+              {['all', 'easy', 'medium', 'hard'].map((diff) => (
+                <button
+                  key={diff}
+                  onClick={() => setSelectedDifficulty(diff)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-medium uppercase tracking-wider transition-all ${
+                    selectedDifficulty === diff
+                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm font-semibold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  {diff}
+                </button>
+              ))}
+            </div>
+
+            {/* Sync S3 Questions Button */}
+            <button
+              onClick={handleSyncS3}
+              disabled={isSyncing}
+              title="Scan S3 bucket and load newly uploaded questions into catalog"
+              className="flex items-center gap-2 rounded-2xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-[#0c0e14]/60 px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 backdrop-blur-xl hover:border-purple-500/50 hover:text-purple-600 dark:hover:text-purple-400 transition-all shadow-sm disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin text-purple-600' : ''}`} />
+              <span>{isSyncing ? 'Syncing...' : 'Sync S3'}</span>
+            </button>
           </div>
         </div>
+
+        {/* Sync notification banner */}
+        {syncNotice && (
+          <div className="rounded-2xl border border-purple-500/20 bg-purple-500/10 px-4 py-2.5 text-xs font-medium text-purple-600 dark:text-purple-400 flex items-center gap-2 animate-in fade-in duration-200">
+            <CheckCircle2 className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+            <span>{syncNotice}</span>
+          </div>
+        )}
 
         {/* Tag / Topic Pills */}
         {allAvailableTags.length > 0 && (
