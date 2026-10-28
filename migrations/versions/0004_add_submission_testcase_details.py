@@ -1,6 +1,6 @@
 """Add custom_input and detailed test results persistence to submissions table
 
-Revision ID: 0004_add_submission_testcase_details
+Revision ID: 0004_submission_details
 Revises: 0003_add_driver_code
 Create Date: 2026-10-27 21:38:00.000000
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '0004_add_submission_testcase_details'
+revision: str = '0004_submission_details'
 down_revision: Union[str, None] = '0003_add_driver_code'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

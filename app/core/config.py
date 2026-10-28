@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
     # AWS Services (Cognito & S3 via Boto3)
-    AWS_REGION: str = "us-east-1"
+    AWS_REGION: str = "ap-south-2"
     COGNITO_USER_POOL_ID: str = ""
     COGNITO_APP_CLIENT_ID: str = ""
     COGNITO_ISSUER: str = ""

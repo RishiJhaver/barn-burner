@@ -115,7 +115,7 @@ This document outlines the end-to-end production cloud deployment strategy for t
 ### Step 3: AWS S3 Bucket & IAM Instance Profile (Avatars & All Test Cases)
 1. **Create S3 Bucket**:
    - Bucket name: `leetcode-clone-storage-<your-account-id>` (globally unique).
-   - Region: Same as your VPC/EC2 (e.g. `us-east-1`).
+   - Region: Same as your VPC/EC2 (e.g. `ap-south-2`).
    - Block Public Access: **Enabled** (private by default; files are accessed via IAM Instance Profile on EC2 or Presigned URLs).
 2. **Bucket Directory Layout**:
    ```
@@ -215,7 +215,7 @@ This document outlines the end-to-end production cloud deployment strategy for t
    - Populate S3 Storage Configuration:
      ```env
      S3_BUCKET_NAME=leetcode-clone-storage-<your-account-id>
-     S3_REGION=us-east-1
+     S3_REGION=ap-south-2
      ```
    - Populate Judge0 endpoint: `JUDGE0_URL=http://<judge0-internal-ip>:2358`
    - Populate AWS Cognito Pool ID & App Client ID.
@@ -282,7 +282,7 @@ This document outlines the end-to-end production cloud deployment strategy for t
    - Set Build Command: `npm run build` or `vite build`.
    - Environment Variables:
      - `VITE_API_URL=https://api.yourdomain.com`
-     - `VITE_COGNITO_USER_POOL_ID=us-east-1_xxxxxxxxx`
+     - `VITE_COGNITO_USER_POOL_ID=ap-south-2_xxxxxxxxx`
      - `VITE_COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx`
 2. **Option B: AWS Native (S3 + CloudFront)**:
    - Create S3 bucket for static assets.

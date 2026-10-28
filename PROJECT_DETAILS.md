@@ -275,10 +275,10 @@ CELERY_BROKER_URL=redis://elasticache-endpoint:6379/1
 CELERY_RESULT_BACKEND=redis://elasticache-endpoint:6379/2
 
 # AWS Cognito
-AWS_REGION=us-east-1
-COGNITO_USER_POOL_ID=us-east-1_xxxxxxxxx
+AWS_REGION=ap-south-2
+COGNITO_USER_POOL_ID=ap-south-2_xxxxxxxxx
 COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
-COGNITO_ISSUER=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_xxxxxxxxx
+COGNITO_ISSUER=https://cognito-idp.ap-south-2.amazonaws.com/ap-south-2_xxxxxxxxx
 MOCK_COGNITO=False
 
 # AWS S3

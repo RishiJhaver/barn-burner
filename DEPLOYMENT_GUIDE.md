@@ -126,7 +126,7 @@ In the AWS EC2 Console, create three Security Groups in your VPC:
 ### 1. Amazon S3 Bucket
 1. Open **Amazon S3** > **Create bucket**.
 2. Name: `leetcode-clone-storage-<your-account-id>` (must be globally unique).
-3. Region: Select your primary region (e.g. `us-east-1`).
+3. Region: Select your primary region (e.g. `ap-south-2`).
 4. **Block Public Access**: Keep **Checked (ON)** — all files are served via IAM or short-lived Presigned URLs.
 5. In the **Permissions** tab, add the **CORS configuration**:
 ```json
@@ -160,7 +160,7 @@ In the AWS EC2 Console, create three Security Groups in your VPC:
    - VPC Security Group: Select **`sg_rds`**.
 8. Initial Database Name (under Additional Configuration): `leetcode_clone`.
 9. Click **Create database**.
-10. Note down the **Endpoint** (e.g., `leetcode-db.xxxx.us-east-1.rds.amazonaws.com`).
+10. Note down the **Endpoint** (e.g., `leetcode-db.xxxx.ap-south-2.rds.amazonaws.com`).
 
 ---
 
@@ -279,14 +279,14 @@ In the AWS EC2 Console, create three Security Groups in your VPC:
 
    # AWS S3 Storage (Authenticates automatically via IAM Role)
    S3_BUCKET_NAME=leetcode-clone-storage-<your-account-id>
-   AWS_REGION=us-east-1
+   AWS_REGION=ap-south-2
    MOCK_S3=False
 
    # AWS Cognito (Configured in Phase 5)
    MOCK_COGNITO=False
-   COGNITO_USER_POOL_ID=us-east-1_xxxxxxxxx
+   COGNITO_USER_POOL_ID=ap-south-2_xxxxxxxxx
    COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
-   COGNITO_ISSUER=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_xxxxxxxxx
+   COGNITO_ISSUER=https://cognito-idp.ap-south-2.amazonaws.com/ap-south-2_xxxxxxxxx
 
    # Judge0 Private Instance Connection (Option C)
    MOCK_JUDGE0=False
@@ -392,7 +392,7 @@ In the AWS EC2 Console, create three Security Groups in your VPC:
    - App client name: `leetcode-web-client`.
    - Client secret: **Don't generate a client secret** (SPAs must not use client secrets).
 6. Under **App integration** > **Hosted UI**:
-   - Domain: Create a Cognito domain prefix (e.g. `auth-leetcode-<unique-id>.auth.us-east-1.amazoncognito.com`).
+   - Domain: Create a Cognito domain prefix (e.g. `auth-leetcode-<unique-id>.auth.ap-south-2.amazoncognito.com`).
    - Allowed callback URLs: `https://your-frontend.vercel.app/`
    - Allowed sign-out URLs: `https://your-frontend.vercel.app/`
    - Identity Providers: Check **Cognito user pool** (and optionally **Google**).

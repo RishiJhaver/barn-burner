@@ -61,16 +61,16 @@ CELERY_RESULT_BACKEND=redis://localhost:6379/2
 # 4. AWS S3 STORAGE (Authenticates automatically via EC2 IAM Role)
 # ==============================================================================
 MOCK_S3=False
-AWS_REGION=us-east-1
+AWS_REGION=ap-south-2
 S3_BUCKET_NAME=YOUR_UNIQUE_S3_BUCKET_NAME
 
 # ==============================================================================
 # 5. AWS COGNITO AUTHENTICATION (From AWS Cognito Console)
 # ==============================================================================
 MOCK_COGNITO=False
-COGNITO_USER_POOL_ID=us-east-1_xxxxxxxxx
+COGNITO_USER_POOL_ID=ap-south-2_xxxxxxxxx
 COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
-COGNITO_ISSUER=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_xxxxxxxxx
+COGNITO_ISSUER=https://cognito-idp.ap-south-2.amazonaws.com/ap-south-2_xxxxxxxxx
 
 # ==============================================================================
 # 6. DEDICATED JUDGE0 CODE EXECUTION (From EC2 Instance 1 Private IP)
@@ -105,9 +105,9 @@ Instead, you configure them in the Vercel web UI:
 | Key | Example Value | Description |
 | :--- | :--- | :--- |
 | `VITE_API_URL` | `http://54.210.15.20` *(or `https://api.yourdomain.com`)* | Public IP or domain of your Backend EC2 instance |
-| `VITE_COGNITO_USER_POOL_ID` | `us-east-1_AbCdEf123` | Your AWS Cognito User Pool ID |
+| `VITE_COGNITO_USER_POOL_ID` | `ap-south-2_AbCdEf123` | Your AWS Cognito User Pool ID |
 | `VITE_COGNITO_CLIENT_ID` | `3nki6b5...` | Your AWS Cognito App Client ID |
-| `VITE_AWS_REGION` | `us-east-1` | AWS region where you created Cognito |
+| `VITE_AWS_REGION` | `ap-south-2` | AWS region where you created Cognito |
 
 ---
 
@@ -211,7 +211,7 @@ Open the [AWS IAM Console](https://console.aws.amazon.com/iam/home#/roles) > **C
 #### Step 2.1: Create Amazon S3 Bucket
 1. Open the [AWS S3 Console](https://console.aws.amazon.com/s3/) > click **Create bucket**.
 2. **Bucket name**: e.g., `leetcode-storage-yourname` (must be unique).
-3. **Region**: `us-east-1` (keep all services in the same region).
+3. **Region**: `ap-south-2` (keep all services in the same region).
 4. Leave **Block all public access** checked (ON).
 5. Under the **Permissions** tab > **Cross-origin resource sharing (CORS)**, paste:
    ```json
@@ -241,7 +241,7 @@ Open the [AWS IAM Console](https://console.aws.amazon.com/iam/home#/roles) > **C
 7. **Additional configuration**:
    * Initial database name: `leetcode_clone`.
 8. Click **Create database**. Wait ~5 minutes until the status is **Available**.
-9. Copy the **Endpoint** URL (e.g., `leetcode-db.c12345.us-east-1.rds.amazonaws.com`).
+9. Copy the **Endpoint** URL (e.g., `leetcode-db.c12345.ap-south-2.rds.amazonaws.com`).
 
 ---
 
@@ -336,10 +336,10 @@ CELERY_RESULT_BACKEND=redis://localhost:6379/2
 
 # AWS Cognito (Configured in Phase 5)
 MOCK_COGNITO=False
-AWS_REGION=us-east-1
+AWS_REGION=ap-south-2
 COGNITO_USER_POOL_ID=YOUR_COGNITO_POOL_ID
 COGNITO_APP_CLIENT_ID=YOUR_COGNITO_CLIENT_ID
-COGNITO_ISSUER=https://cognito-idp.us-east-1.amazonaws.com/YOUR_COGNITO_POOL_ID
+COGNITO_ISSUER=https://cognito-idp.ap-south-2.amazonaws.com/YOUR_COGNITO_POOL_ID
 
 # AWS S3 Storage
 MOCK_S3=False
@@ -460,9 +460,9 @@ sudo systemctl reload caddy
    * **Framework Preset**: Vite (detected automatically).
    * **Environment Variables**: Add these 4:
      * `VITE_API_URL` = `http://<YOUR-ELASTIC-IP>` *(or your custom HTTPS domain)*
-     * `VITE_COGNITO_USER_POOL_ID` = `us-east-1_xxxxxxxxx`
+     * `VITE_COGNITO_USER_POOL_ID` = `ap-south-2_xxxxxxxxx`
      * `VITE_COGNITO_CLIENT_ID` = `xxxxxxxxxxxxxxxxxx`
-     * `VITE_AWS_REGION` = `us-east-1`
+     * `VITE_AWS_REGION` = `ap-south-2`
 4. Click **Deploy**. Vercel will build and provide your live URL (e.g. `https://barn-burner.vercel.app`).
 
 ---
