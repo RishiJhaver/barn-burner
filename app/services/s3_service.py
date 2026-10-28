@@ -107,6 +107,7 @@ class S3Service:
         """Fetch consolidated testcase bundle JSON from S3 if available."""
         import json
         candidates = [
+            f"problems/{slug}/testcases.json" if slug else None,
             f"problems/{slug}/testcases/bundle.json" if slug else None,
             f"problems/{slug}/bundle.json" if slug else None,
             f"testcases/{slug}/bundle.json" if slug else None,
@@ -120,6 +121,8 @@ class S3Service:
                     data = json.loads(content)
                     if isinstance(data, dict) and "test_cases" in data:
                         return data
+                    elif isinstance(data, list):
+                        return {"test_cases": data}
                 except Exception as exc:
                     logger.warning("Failed to parse S3 bundle at %s: %s", key, exc)
         return None

@@ -136,20 +136,31 @@ def upload_problem_to_s3(s3, bucket: str, problem_data: Dict[str, Any]):
     )
     print(f"   ✓ {tmpl_key}")
 
-    # 4. Upload testcases/bundle.json
+    # 4. Upload testcases.json
+    tc_key = f"problems/{slug}/testcases.json"
+    tc_data = [
+        {
+            "id": idx + 1,
+            "input": tc.get("input", ""),
+            "expected_output": tc.get("expected_output", ""),
+            "is_sample": tc.get("is_sample", False),
+        }
+        for idx, tc in enumerate(test_cases)
+    ]
+    s3.put_object(
+        Bucket=bucket,
+        Key=tc_key,
+        Body=json.dumps(tc_data, indent=2).encode("utf-8"),
+        ContentType="application/json; charset=utf-8",
+    )
+    print(f"   ✓ {tc_key} ({len(test_cases)} test cases)")
+
+    # Also keep bundle.json for compatibility
     bundle_key = f"problems/{slug}/testcases/bundle.json"
     bundle_data = {
         "slug": slug,
         "title": title,
-        "test_cases": [
-            {
-                "id": idx + 1,
-                "input": tc.get("input", ""),
-                "expected_output": tc.get("expected_output", ""),
-                "is_sample": tc.get("is_sample", False),
-            }
-            for idx, tc in enumerate(test_cases)
-        ],
+        "test_cases": tc_data,
     }
     s3.put_object(
         Bucket=bucket,
@@ -157,7 +168,6 @@ def upload_problem_to_s3(s3, bucket: str, problem_data: Dict[str, Any]):
         Body=json.dumps(bundle_data, indent=2).encode("utf-8"),
         ContentType="application/json; charset=utf-8",
     )
-    print(f"   ✓ {bundle_key} ({len(test_cases)} test cases)")
 
     # 5. Upload individual test case files for convenience & manual browsing
     for idx, tc in enumerate(test_cases):
